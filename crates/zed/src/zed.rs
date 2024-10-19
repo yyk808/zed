@@ -27,6 +27,7 @@ use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
+use mega_panel::MegaPanel;
 use project::Item;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -238,6 +239,7 @@ pub fn initialize_workspace(
 
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+            let mega_panel = MegaPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
@@ -250,6 +252,7 @@ pub fn initialize_workspace(
 
             let (
                 project_panel,
+                mega_panel,
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
@@ -258,6 +261,7 @@ pub fn initialize_workspace(
                 notification_panel,
             ) = futures::try_join!(
                 project_panel,
+                mega_panel,
                 outline_panel,
                 terminal_panel,
                 assistant_panel,
@@ -269,6 +273,7 @@ pub fn initialize_workspace(
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
+                workspace.add_panel(mega_panel, cx);
                 workspace.add_panel(outline_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
                 workspace.add_panel(channels_panel, cx);
@@ -465,6 +470,13 @@ pub fn initialize_workspace(
                  _: &project_panel::ToggleFocus,
                  cx: &mut ViewContext<Workspace>| {
                     workspace.toggle_panel_focus::<ProjectPanel>(cx);
+                },
+            )
+            .register_action(
+                |workspace: &mut Workspace,
+                 _: &mega_panel::ToggleFocus,
+                 cx: &mut ViewContext<Workspace>| {
+                    workspace.toggle_panel_focus::<MegaPanel>(cx);
                 },
             )
             .register_action(

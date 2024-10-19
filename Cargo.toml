@@ -64,6 +64,8 @@ members = [
     "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
+    "crates/mega",
+    "crates/mega_panel",
     "crates/menu",
     "crates/multi_buffer",
     "crates/node_runtime",
@@ -240,6 +242,8 @@ lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
+mega = { path = "crates/mega" }
+mega_panel = { path = "crates/mega_panel" }
 menu = { path = "crates/menu" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }

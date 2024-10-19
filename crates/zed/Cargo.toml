@@ -66,6 +66,7 @@ languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
+mega_panel.workspace = true
 menu.workspace = true
 mimalloc = { version = "0.1", optional = true }
 nix = { workspace = true, features = ["pthread", "signal"] }

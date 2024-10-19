@@ -6885,6 +6885,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mega"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.12.8",
+ "serde",
+]
+
+[[package]]
+name = "mega_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "file_icons",
+ "gpui",
+ "schemars",
+ "serde",
+ "settings",
+ "workspace",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14631,6 +14653,7 @@ dependencies = [
  "libc",
  "log",
  "markdown_preview",
+ "mega_panel",
  "menu",
  "mimalloc",
  "nix",
