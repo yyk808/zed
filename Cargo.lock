@@ -6900,6 +6900,7 @@ dependencies = [
  "anyhow",
  "db",
  "file_icons",
+ "fs",
  "gpui",
  "mega",
  "schemars",

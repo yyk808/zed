@@ -17,6 +17,7 @@ gpui.workspace = true
 file_icons.workspace = true
 settings.workspace = true
 db.workspace = true
+fs.workspace = true
 util.workspace = true
 
 anyhow.workspace = true

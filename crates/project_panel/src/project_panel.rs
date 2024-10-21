@@ -3060,6 +3060,10 @@ impl EventEmitter<Event> for ProjectPanel {}
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
 impl Panel for ProjectPanel {
+    fn persistent_name() -> &'static str {
+        "Project Panel"
+    }
+
     fn position(&self, cx: &WindowContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
@@ -3108,10 +3112,6 @@ impl Panel for ProjectPanel {
 
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
-    }
-
-    fn persistent_name() -> &'static str {
-        "Project Panel"
     }
 
     fn starts_open(&self, cx: &WindowContext) -> bool {

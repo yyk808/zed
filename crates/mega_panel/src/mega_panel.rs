@@ -1,6 +1,8 @@
+use std::sync::Arc;
 use anyhow::{anyhow, Context};
 use db::kvp::KEY_VALUE_STORE;
 use file_icons::FileIcons;
+use fs::Fs;
 use gpui::{actions, Action, AppContext, AssetSource, AsyncWindowContext, Entity, EventEmitter, FocusHandle, FocusableView, IntoElement, Model, Pixels, Render, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext};
 use gpui::private::serde_derive::{Deserialize, Serialize};
 use gpui::private::serde_json;
@@ -10,7 +12,7 @@ use util::{ResultExt, TryFutureExt};
 use workspace::dock::{DockPosition, Panel, PanelEvent, PanelId};
 use workspace::ui::IconName;
 use workspace::{Pane, Workspace};
-use crate::mega_panel_settings::MegaPanelSettings;
+use crate::mega_panel_settings::{MegaPanelDockPosition, MegaPanelSettings};
 
 mod mega_panel_settings;
 
@@ -29,6 +31,7 @@ pub struct MegaPanel {
     mega: WeakModel<Mega>,
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
+    fs: Arc<dyn Fs>,
     pending_serialization: Task<Option<()>>,
     width: Option<Pixels>,
 }
@@ -78,39 +81,57 @@ impl FocusableView for MegaPanel {
 
 impl Panel for MegaPanel {
     fn persistent_name() -> &'static str {
-        todo!()
+        "Mega Panel"
     }
 
     fn position(&self, cx: &WindowContext) -> DockPosition {
-        todo!()
+        match MegaPanelSettings::get_global(cx).dock {
+            MegaPanelDockPosition::Left => DockPosition::Left,
+            MegaPanelDockPosition::Right => DockPosition::Right,
+        }
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
-        todo!()
+        matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        todo!()
+        settings::update_settings_file::<MegaPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left | DockPosition::Bottom => MegaPanelDockPosition::Left,
+                    DockPosition::Right => MegaPanelDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
     }
 
     fn size(&self, cx: &WindowContext) -> Pixels {
-        todo!()
+        self.width
+            .unwrap_or_else(|| MegaPanelSettings::get_global(cx).default_width)
     }
 
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
-        todo!()
+        self.width = size;
+        self.serialize(cx);
+        cx.notify();
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<IconName> {
-        todo!()
+        MegaPanelSettings::get_global(cx)
+            .button
+            .then_some(IconName::FileGit)
     }
 
     fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str> {
-        todo!()
+        Some("Mega Panel")
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        todo!()
+        Box::new(ToggleFocus)
     }
 }
 
