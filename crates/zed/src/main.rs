@@ -257,6 +257,7 @@ fn init_ui(
     outline::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
+    mega_panel::init(Assets, cx);
     outline_panel::init(Assets, cx);
     tasks_ui::init(cx);
     snippets_ui::init(cx);

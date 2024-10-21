@@ -371,6 +371,14 @@
       "show": null
     }
   },
+  "mega_panel": {
+    // Whether to show the mega panel button in the status bar
+    "button": true,
+    // Default width of the mega panel.
+    "default_width": 240,
+    // Where to dock the mega panel. Can be 'left' or 'right'.
+    "dock": "left",
+  },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
     "button": true,

@@ -10,7 +10,7 @@ use mega::{Mega, MegaFuse};
 use settings::{Settings, SettingsStore};
 use util::{ResultExt, TryFutureExt};
 use workspace::dock::{DockPosition, Panel, PanelEvent, PanelId};
-use workspace::ui::IconName;
+use workspace::ui::{v_flex, IconName};
 use workspace::{Pane, Workspace};
 use crate::mega_panel_settings::{MegaPanelDockPosition, MegaPanelSettings};
 
@@ -52,6 +52,7 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
+    println!("Mega settings should be registered");
     file_icons::init(assets, cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -68,8 +69,7 @@ impl EventEmitter<PanelEvent> for MegaPanel {}
 
 impl Render for MegaPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        todo!();
-        ""
+        v_flex()
     }
 }
 
@@ -183,9 +183,9 @@ impl MegaPanel {
                 mega: mega.downgrade(),
                 workspace: workspace.weak_handle(),
                 focus_handle,
+                fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 width: None,
-                
             }
         });
 
