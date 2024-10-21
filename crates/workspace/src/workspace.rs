@@ -97,6 +97,7 @@ use ui::{
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use mega::Mega;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
@@ -559,6 +560,7 @@ pub struct AppState {
     pub build_window_options: fn(Option<Uuid>, &mut AppContext) -> WindowOptions,
     pub node_runtime: NodeRuntime,
     pub session: Model<AppSession>,
+    pub mega: Model<Mega>,
 }
 
 struct GlobalAppState(Weak<AppState>);
@@ -609,7 +611,8 @@ impl AppState {
         let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-
+        let mega = cx.new_model(|cx| { Mega::new(cx) });
+            
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
         crate::init_settings(cx);
@@ -623,6 +626,7 @@ impl AppState {
             node_runtime: NodeRuntime::unavailable(),
             build_window_options: |_, _| Default::default(),
             session,
+            mega,
         })
     }
 }
@@ -1266,6 +1270,8 @@ impl Workspace {
     pub fn project(&self) -> &Model<Project> {
         &self.project
     }
+    
+    pub fn mega(&self) -> &Model<Mega> { &self.app_state.mega }
 
     pub fn recent_navigation_history(
         &self,
@@ -4426,6 +4432,7 @@ impl Workspace {
 
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
+        let mega = cx.new_model(|cx|  Mega::new(cx) );
         cx.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
@@ -4436,6 +4443,7 @@ impl Workspace {
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
             session,
+            mega,
         });
         let workspace = Self::new(Default::default(), project, app_state, cx);
         workspace.active_pane.update(cx, |pane, cx| pane.focus(cx));

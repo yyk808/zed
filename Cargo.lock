@@ -6888,6 +6888,7 @@ dependencies = [
 name = "mega"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "reqwest 0.12.8",
  "serde",
 ]
@@ -6897,12 +6898,14 @@ name = "mega_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "editor",
+ "db",
  "file_icons",
  "gpui",
+ "mega",
  "schemars",
  "serde",
  "settings",
+ "util",
  "workspace",
 ]
 
@@ -14314,6 +14317,7 @@ dependencies = [
  "itertools 0.13.0",
  "language",
  "log",
+ "mega",
  "node_runtime",
  "parking_lot",
  "postage",
@@ -14653,6 +14657,7 @@ dependencies = [
  "libc",
  "log",
  "markdown_preview",
+ "mega",
  "mega_panel",
  "menu",
  "mimalloc",

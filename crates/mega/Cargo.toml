@@ -1,0 +1,18 @@
+[package]
+name = "mega"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = 'src/mega.rs'
+
+[dependencies]
+gpui.workspace = true
+
+reqwest.workspace = true
+serde.workspace = true

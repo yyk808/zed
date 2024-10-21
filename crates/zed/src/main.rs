@@ -53,6 +53,7 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use mega::Mega;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
     notifications::{simple_message_notification::MessageNotification, NotificationId},
@@ -521,6 +522,7 @@ fn main() {
         Client::set_global(client.clone(), cx);
 
         zed::init(cx);
+        mega::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
         language::init(cx);
@@ -548,7 +550,8 @@ fn main() {
             }
         }
         let app_session = cx.new_model(|cx| AppSession::new(session, cx));
-
+        let mega = cx.new_model(|cx| Mega::new(cx));
+        
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -558,6 +561,7 @@ fn main() {
             workspace_store,
             node_runtime: node_runtime.clone(),
             session: app_session,
+            mega,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
