@@ -244,6 +244,7 @@ impl MegaPanel {
     pub fn toggle_fuse_mount(&mut self, _: &ToggleFuseMount, cx: &mut ViewContext<Self>) {
         // let mega = self.mega_handle.upgrade()
         //     .unwrap_or_else()
+        
         todo!()
     }
     

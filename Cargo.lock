@@ -6888,6 +6888,7 @@ dependencies = [
 name = "mega"
 version = "0.1.0"
 dependencies = [
+ "bytes 0.4.12",
  "gpui",
  "reqwest_client",
  "serde",
