@@ -6889,7 +6889,7 @@ name = "mega"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "reqwest 0.12.8",
+ "reqwest_client",
  "serde",
 ]
 
@@ -6906,8 +6906,10 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "text",
  "util",
  "workspace",
+ "worktree",
 ]
 
 [[package]]

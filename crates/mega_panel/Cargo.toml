@@ -13,11 +13,13 @@ workspace = true
 [dependencies]
 mega.workspace = true
 workspace.workspace = true
+worktree.workspace = true
 gpui.workspace = true
 file_icons.workspace = true
 settings.workspace = true
 db.workspace = true
 fs.workspace = true
+text.workspace = true
 util.workspace = true
 
 anyhow.workspace = true
