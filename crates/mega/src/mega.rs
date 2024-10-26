@@ -6,8 +6,9 @@
 // 2. At least one daemon on this machine when zed startup.
 // 3. Complete docs.
 
+use std::path::{Path, PathBuf};
 use gpui::http_client::{AsyncBody, HttpClient};
-use gpui::{AppContext, Context, EventEmitter, WindowContext};
+use gpui::{AppContext, Context, EntityId, EventEmitter, ModelContext, WindowContext};
 use reqwest_client::ReqwestClient;
 use serde::Serialize;
 
@@ -22,10 +23,18 @@ pub fn init(cx: &mut AppContext) {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {}
+pub enum Event {
+    MegaRunning(bool),
+    FuseRunning(bool),
+    FuseMounted(bool),
+}
 pub struct Mega {
     mega_running: bool,
     fuse_running: bool,
+    fuse_mounted: bool,
+    
+    checkout_path: Option<PathBuf>,
+    panel_id: Option<EntityId>,
 }
 
 pub struct MegaFuse {}
@@ -49,19 +58,36 @@ impl Mega {
         Mega {
             fuse_running: false,
             mega_running: false,
+            fuse_mounted: false,
+            checkout_path: None,
+            panel_id: None,
         }
-    } 
+    }
     
-    pub fn toggle_mega(&self, cx: &mut WindowContext) { todo!() }
+    pub fn update_status(&mut self, cx: &mut ModelContext<Self>) {
+        if let None = self.panel_id {
+            return;
+        }
+        
+        cx.notify();
+    }
     
-    pub fn toggle_fuse(&self, cx: &mut WindowContext) { todo!() }
+    pub fn status(&self) -> (bool, bool, bool) {
+        (self.mega_running, self.fuse_running, self.fuse_mounted)
+    }
+    
+    pub fn toggle_mega(&self, cx: &mut ModelContext<Self>) { todo!() }
+    
+    pub fn toggle_fuse(&self, cx: &mut ModelContext<Self>) { 
+        
+    }
 
-    pub fn toggle_mount(&self, cx: &mut WindowContext) {
+    pub fn toggle_mount(&self, cx: &mut ModelContext<Self>) {
         // let req_body = delegate::MountRequest {
         //     path: "".parse().unwrap()
         // };
         
-        cx.spawn(|_cx| async {
+        cx.spawn(|_this, _cx| async {
             let client = ReqwestClient::new();
             let req = client.get(
                 "localhost:2725/api/fs/mount",
@@ -71,8 +97,8 @@ impl Mega {
         }).detach();
     }
     
-    pub fn checkout_path(&self, cx: &mut WindowContext) {
-        cx.spawn(|_cx| async {
+    pub fn checkout_path(&self, cx: &mut ModelContext<Self>) {
+        cx.spawn(|_this, _cx| async {
             let client = ReqwestClient::new();
             let req = client.get(
                 "localhost:2725/api/fs/mount",
@@ -82,8 +108,8 @@ impl Mega {
         }).detach();
     }
 
-    pub fn get_fuse_config(&self, cx: &mut WindowContext) {
-        cx.spawn(|_cx| async {
+    pub fn get_fuse_config(&self, cx: &mut ModelContext<Self>) {
+        cx.spawn(|_this, _cx| async {
             let client = ReqwestClient::new();
             let req = client.get(
                 "localhost:2725/api/fs/mount",
@@ -93,8 +119,8 @@ impl Mega {
         }).detach();
     }
 
-    pub fn set_fuse_config(&self, cx: &mut WindowContext) {
-        cx.spawn(|_cx| async {
+    pub fn set_fuse_config(&self, cx: &mut ModelContext<Self>) {
+        cx.spawn(|_this, _cx| async {
             let client = ReqwestClient::new();
             let req = client.post_json(
                 "localhost:2725/api/config",
@@ -103,8 +129,8 @@ impl Mega {
         }).detach();
     }
 
-    pub fn get_fuse_mpoint(&self, cx: &mut WindowContext) {
-        cx.spawn(|_cx| async {
+    pub fn get_fuse_mpoint(&self, cx: &mut ModelContext<Self>) {
+        cx.spawn(|_this, _cx| async {
             let client = ReqwestClient::new();
             let req = client.get(
                 "localhost:2725/api/config",
