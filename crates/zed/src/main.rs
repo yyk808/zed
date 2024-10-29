@@ -523,10 +523,9 @@ fn main() {
         Client::set_global(client.clone(), cx);
 
         zed::init(cx);
-        mega::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
-        language::init(cx);
+        mega::init(cx);
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),

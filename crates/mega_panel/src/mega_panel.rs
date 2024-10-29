@@ -1,10 +1,11 @@
+use std::path::PathBuf;
 use crate::mega_panel_settings::{MegaPanelDockPosition, MegaPanelSettings};
 use anyhow::{anyhow, Context};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::private::serde_derive::{Deserialize, Serialize};
 use gpui::private::serde_json;
-use gpui::{actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, Hsla, InteractiveElement, IntoElement, Model, ParentElement, Pixels, PromptLevel, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext};
+use gpui::{actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, PathPromptOptions, Pixels, PromptLevel, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext};
 use mega::Mega;
 use settings::Settings;
 use std::sync::Arc;
@@ -154,7 +155,7 @@ impl Panel for MegaPanel {
             .then_some(IconName::FileGit)
     }
 
-    fn icon_tooltip(&self, cx: &WindowContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
         Some("Mega Panel")
     }
 
@@ -203,6 +204,7 @@ impl MegaPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
+            #[allow(unused)]
             cx.subscribe(mega, |this, mega, event, cx| {
                 // TODO: listen for mega events
             }).detach();
@@ -243,15 +245,21 @@ impl MegaPanel {
         }
     }
 
-    pub fn toggle_fuse_mount(&mut self, _: &ToggleFuseMount, cx: &mut ViewContext<Self>) {
-        // let mega = self.mega_handle.upgrade()
-        //     .unwrap_or_else()
-
-        self.warn_unimplemented(cx);
-    }
-
     pub fn checkout_path(&mut self, _: &CheckoutPath, cx: &mut ViewContext<Self>) {
         self.warn_unimplemented(cx);
+    }
+    
+    pub fn toggle_fuse_mount(&mut self, _: &ToggleFuseMount, cx: &mut ViewContext<Self>) {
+        // if let Some(workspace) = self.workspace.upgrade() {
+        //     workspace.model.update(cx, |this, mx| {
+        //         
+        //     });
+        // }
+
+        self.mega_handle.update(cx, |this, cx | { 
+            this.toggle_mount(cx);
+            
+        });
     }
 
     fn render_status(&mut self, cx: &mut ViewContext<Self>) -> Div {
@@ -283,12 +291,22 @@ impl MegaPanel {
             .id("mega-control-pad")
             .size_full()
             .children([
+                encap_btn(Button::new("btn_toggle_mega", "Toggle Mega")
+                    .full_width()
+                    .icon(IconName::Plus)
+                    .icon_position(IconPosition::Start)
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.mega_handle.update(cx, |mega, cx| mega.toggle_mega(cx));
+                        this.warn_unimplemented(cx);
+                    }))
+                ),
                 encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio")
                     .full_width()
                     .icon(IconName::Plus)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_fuse(cx));
+                        this.warn_unimplemented(cx);
                     }))
                 ),
                 encap_btn(Button::new("btn_toggle_mount", "Toggle Mount")
@@ -297,6 +315,9 @@ impl MegaPanel {
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
+                        
+                        
+                        this.warn_unimplemented(cx);
                     }))
                 ),
                 encap_btn(Button::new("btn_checkout", "Checkout Path")
@@ -304,15 +325,34 @@ impl MegaPanel {
                     .icon(IconName::Check)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
-                        // TODO: should get the path here
-                        this.mega_handle.update(cx, |mega, cx| mega.checkout_path(cx));
+                        this.warn_unimplemented(cx);
+                        // TODO: should read the path here
+                        let options = PathPromptOptions {
+                            files: true,
+                            directories: true,
+                            multiple: false,
+                        };
+                        
+                        let abs_path = cx.prompt_for_paths(options);
+                        // if let Some(workspace_view) = this.workspace.upgrade() {
+                        //     let mut workspace = workspace_view.read(cx);
+                        //     workspace.open_workspace_for_paths(false, vec![], cx);
+                        // }
+                        cx.spawn(|this, mut cx| async move {
+                            let Ok(Ok(Some(result))) = abs_path.await else {
+                                return;
+                            };
+                            
+                            
+                        }).detach();
+                        // mega.update(cx, |mega, cx| mega.checkout_path(cx));
                     }))
                 ),
             ])
     }
 
     fn status_unit(&self, cx: &mut ViewContext<MegaPanel>, name: &'static str, state: bool) -> Stateful<Div> {
-        let unit_id = ElementId::from(SharedString::from(format!("status_{}", name.clone())));
+        let unit_id = ElementId::from(SharedString::from(format!("status_{}", name)));
         div()
             .text_ui(cx)
             .id(unit_id)
@@ -328,7 +368,7 @@ impl MegaPanel {
     }
 
     fn warn_unimplemented(&self, cx: &mut ViewContext<Self>) {
-        let message = String::from("This operation is not implemented yet");
+        let message = String::from("This operation is not implemented yet, functions may not behave correctly");
         let _ = cx.prompt(PromptLevel::Warning, "Unimplemented", Some(&message), &["Got it"]);
     }
 }

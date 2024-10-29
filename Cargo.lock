@@ -6888,10 +6888,13 @@ dependencies = [
 name = "mega"
 version = "0.1.0"
 dependencies = [
- "bytes 0.4.12",
+ "anyhow",
+ "bytes 1.7.2",
  "gpui",
  "reqwest_client",
+ "schemars",
  "serde",
+ "settings",
 ]
 
 [[package]]
@@ -8521,6 +8524,7 @@ dependencies = [
  "gpui",
  "indexmap 1.9.3",
  "language",
+ "mega",
  "menu",
  "pretty_assertions",
  "project",

@@ -43,6 +43,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use db::write_and_log;
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
@@ -223,6 +224,7 @@ struct DraggedProjectEntryView {
 impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
+        let mega = workspace.mega().clone();
         let project_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
@@ -281,6 +283,34 @@ impl ProjectPanel {
                 },
             )
             .detach();
+
+            cx.subscribe(&mega, |this, mega, mega_event, cx| match mega_event {
+                mega::Event::FuseMounted(Some(path)) => {
+                    let path = path.to_owned();
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            cx.spawn(|this, mut cx| async move {
+                                if let Some(task) = this
+                                    .update(&mut cx, |this, cx| {
+                                        this.open_workspace_for_paths(false, vec!(path), cx)
+                                    })
+                                    .log_err()
+                                {
+                                    task.await.log_err();
+                                }
+                            })
+                                .detach()
+                        })
+                        .log_err();
+                        
+                        
+                }
+                mega::Event::FuseCheckout(path) => {
+                    // FIXME: impl it.
+                    println!("Fuse Checkout NOT implemented in project for now!");
+                }
+                _ => {}
+            }).detach();
 
             cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
@@ -491,6 +521,7 @@ impl ProjectPanel {
             entry_id,
         });
 
+        // FIXME add fuse dir specific behaviors
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
             let is_root = Some(entry) == worktree.root_entry();

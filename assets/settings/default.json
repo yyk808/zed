@@ -379,6 +379,18 @@
     // Where to dock the mega panel. Can be 'left' or 'right'.
     "dock": "left",
   },
+  "mega": {
+    // Url to communicate with mega
+    "mega_url": "http://localhost:8000",
+    // Url to communicate with fuse
+    "fuse_url": "http://localhost:2725",
+    // Default mount point for fuse
+    "mount_point": "/home/neon/projects",
+    // Path for mega executable
+    "mega_executable": "mega",
+    // Path for fuse executable
+    "fuse_executable": "scorpio"
+  },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
     "button": true,

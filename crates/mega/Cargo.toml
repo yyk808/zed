@@ -14,6 +14,9 @@ path = 'src/mega.rs'
 [dependencies]
 gpui.workspace = true
 reqwest_client.workspace = true
+settings.workspace = true
 
 serde.workspace = true
-bytes = "0.4.12"
+bytes.workspace = true
+schemars.workspace = true
+anyhow.workspace = true
