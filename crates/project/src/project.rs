@@ -576,6 +576,112 @@ impl Project {
         TaskStore::init(Some(&client));
     }
 
+    pub fn local_new (
+        client: Arc<Client>,
+        node: NodeRuntime,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        env: Option<HashMap<String, String>>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
+        cx.new_model(|cx: &mut ModelContext<Self>| {
+            let (tx, rx) = mpsc::unbounded();
+            cx.spawn(move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
+                .detach();
+            let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
+            let worktree_store = cx.new_model(|_| WorktreeStore::local(false, fs.clone()));
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+                .detach();
+
+            let buffer_store = cx.new_model(|cx| BufferStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let prettier_store = cx.new_model(|cx| {
+                PrettierStore::new(
+                    node.clone(),
+                    fs.clone(),
+                    languages.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            });
+
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+
+            let task_store = cx.new_model(|cx| {
+                TaskStore::local(
+                    fs.clone(),
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
+            let settings_observer = cx.new_model(|cx| {
+                SettingsObserver::new_local(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
+
+            let lsp_store = cx.new_model(|cx| {
+                LspStore::new_local(
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    prettier_store.clone(),
+                    environment.clone(),
+                    languages.clone(),
+                    client.http_client(),
+                    fs.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+
+            Self {
+                buffer_ordered_messages_tx: tx,
+                collaborators: Default::default(),
+                worktree_store,
+                buffer_store,
+                lsp_store,
+                join_project_response_message_id: 0,
+                client_state: ProjectClientState::Local,
+                client_subscriptions: Vec::new(),
+                _subscriptions: vec![cx.on_release(Self::release)],
+                active_entry: None,
+                snippets,
+                languages,
+                client,
+                task_store,
+                user_store,
+                settings_observer,
+                fs,
+                ssh_client: None,
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DebouncedDelay::new(),
+                terminals: Terminals {
+                    local_handles: Vec::new(),
+                },
+                node: Some(node),
+                hosted_project_id: None,
+                dev_server_project_id: None,
+                search_history: Self::new_search_history(),
+                environment,
+                remotely_created_models: Default::default(),
+
+                search_included_history: Self::new_search_history(),
+                search_excluded_history: Self::new_search_history(),
+            }
+        })
+    }
+
     pub fn local(
         client: Arc<Client>,
         node: NodeRuntime,

@@ -286,6 +286,7 @@ impl ProjectPanel {
 
             cx.subscribe(&mega, |this, mega, mega_event, cx| match mega_event {
                 mega::Event::FuseMounted(Some(path)) => {
+                    
                     let path = path.to_owned();
                     this.workspace
                         .update(cx, |workspace, cx| {
@@ -302,8 +303,8 @@ impl ProjectPanel {
                                 .detach()
                         })
                         .log_err();
-                        
-                        
+
+
                 }
                 mega::Event::FuseCheckout(path) => {
                     // FIXME: impl it.

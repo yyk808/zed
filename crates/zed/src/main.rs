@@ -867,49 +867,56 @@ async fn installation_id() -> Result<IdType> {
     Ok(IdType::New(installation_id))
 }
 
+/// **Mega Fuse Integration:** 
+///
+/// This function is used for detect if there is an existing workspace opened
+/// in the last run.
+///
+/// Whenever the case is, create an empty workspace
+/// because fuse dir cannot be warrantied to be available at zed startup.
 async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
-        for location in locations {
-            match location {
-                SerializedWorkspaceLocation::Local(location, _) => {
-                    let task = cx.update(|cx| {
-                        workspace::open_paths(
-                            location.paths().as_ref(),
-                            app_state.clone(),
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                    })?;
-                    task.await?;
-                }
-                SerializedWorkspaceLocation::Ssh(ssh_project) => {
-                    let connection_options = SshConnectionOptions {
-                        host: ssh_project.host.clone(),
-                        username: ssh_project.user.clone(),
-                        port: ssh_project.port,
-                        password: None,
-                    };
-                    let app_state = app_state.clone();
-                    cx.spawn(move |mut cx| async move {
-                        recent_projects::open_ssh_project(
-                            connection_options,
-                            ssh_project.paths.into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            &mut cx,
-                        )
-                        .await
-                        .log_err();
-                    })
-                    .detach();
-                }
-                SerializedWorkspaceLocation::DevServer(_) => {}
-            }
-        }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    // if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+    //     for location in locations {
+    //         match location {
+    //             SerializedWorkspaceLocation::Local(location, _) => {
+    //                 let task = cx.update(|cx| {
+    //                     workspace::open_paths(
+    //                         location.paths().as_ref(),
+    //                         app_state.clone(),
+    //                         workspace::OpenOptions::default(),
+    //                         cx,
+    //                     )
+    //                 })?;
+    //                 task.await?;
+    //             }
+    //             SerializedWorkspaceLocation::Ssh(ssh_project) => {
+    //                 let connection_options = SshConnectionOptions {
+    //                     host: ssh_project.host.clone(),
+    //                     username: ssh_project.user.clone(),
+    //                     port: ssh_project.port,
+    //                     password: None,
+    //                 };
+    //                 let app_state = app_state.clone();
+    //                 cx.spawn(move |mut cx| async move {
+    //                     recent_projects::open_ssh_project(
+    //                         connection_options,
+    //                         ssh_project.paths.into_iter().map(PathBuf::from).collect(),
+    //                         app_state,
+    //                         workspace::OpenOptions::default(),
+    //                         &mut cx,
+    //                     )
+    //                     .await
+    //                     .log_err();
+    //                 })
+    //                 .detach();
+    //             }
+    //             SerializedWorkspaceLocation::DevServer(_) => {}
+    //         }
+    //     }
+    if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
