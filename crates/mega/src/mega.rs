@@ -123,7 +123,7 @@ impl Mega {
         }).detach();
     }
     
-    pub fn checkout_path(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn checkout_path(&mut self, cx: &mut ModelContext<Self>, mut path: PathBuf) {
         // for now, we assume there's only one path being checkout at a time.
         if self.checkout_path.is_none() {
             cx.spawn(|_this, _cx| async {
@@ -137,6 +137,22 @@ impl Mega {
         }
         
         
+    }
+
+    pub fn checkout_multi_path(&mut self, cx: &mut ModelContext<Self>, mut path: Vec<PathBuf>) {
+        // for now, we assume there's only one path being checkout at a time.
+        if self.checkout_path.is_none() {
+            cx.spawn(|_this, _cx| async {
+                let client = ReqwestClient::new();
+                let req = client.get(
+                    "localhost:2725/api/fs/mount",
+                    AsyncBody::empty(),
+                    false
+                ).await;
+            }).detach();
+        }
+
+
     }
 
     pub fn get_fuse_config(&self, cx: &mut ModelContext<Self>) {

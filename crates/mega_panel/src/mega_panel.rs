@@ -5,7 +5,7 @@ use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::private::serde_derive::{Deserialize, Serialize};
 use gpui::private::serde_json;
-use gpui::{actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, PathPromptOptions, Pixels, PromptLevel, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext};
+use gpui::{actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId, EventEmitter, Flatten, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, PathPromptOptions, Pixels, PromptLevel, Render, SharedString, Stateful, StatefulInteractiveElement, Styled, Task, UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext};
 use mega::Mega;
 use settings::Settings;
 use std::sync::Arc;
@@ -257,6 +257,7 @@ impl MegaPanel {
         // }
 
         self.mega_handle.update(cx, |this, cx | { 
+            // FIXME when there's already a visible worktree, this call will create a new window.
             this.toggle_mount(cx);
             
         });
@@ -315,8 +316,6 @@ impl MegaPanel {
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
-                        
-                        
                         this.warn_unimplemented(cx);
                     }))
                 ),
@@ -326,7 +325,6 @@ impl MegaPanel {
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
                         this.warn_unimplemented(cx);
-                        // TODO: should read the path here
                         let options = PathPromptOptions {
                             files: true,
                             directories: true,
@@ -334,18 +332,18 @@ impl MegaPanel {
                         };
                         
                         let abs_path = cx.prompt_for_paths(options);
-                        // if let Some(workspace_view) = this.workspace.upgrade() {
-                        //     let mut workspace = workspace_view.read(cx);
-                        //     workspace.open_workspace_for_paths(false, vec![], cx);
-                        // }
-                        cx.spawn(|this, mut cx| async move {
-                            let Ok(Ok(Some(result))) = abs_path.await else {
-                                return;
-                            };
+
+                        // Why so annoying...
+                        let mega = this.mega_handle.clone();
+                        cx.spawn(|this, mut cx|async move {
+                            // mega.update(&mut cx, |this, cx| async move {
+                            //     if let Ok(Ok(Some(result))) = abs_path.await {
+                            //         this.checkout_multi_path(cx, result);
+                            //     }
+                            // }).log_err();
                             
-                            
-                        }).detach();
-                        // mega.update(cx, |mega, cx| mega.checkout_path(cx));
+                        }) .detach();
+                        
                     }))
                 ),
             ])

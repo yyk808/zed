@@ -44,6 +44,7 @@ use std::{
     time::Duration,
 };
 use db::write_and_log;
+use mega::Mega;
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
@@ -58,7 +59,9 @@ const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
+    // TODO: use segment tree to fastly store multiple checkout path,
     project: Model<Project>,
+    mega: Model<Mega>,
     fs: Arc<dyn Fs>,
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
@@ -67,6 +70,7 @@ pub struct ProjectPanel {
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
+    checkout_entry_id: Option<ProjectEntryId>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -164,6 +168,7 @@ actions!(
         UnfoldDirectory,
         FoldDirectory,
         SelectParent,
+        CheckoutPath,
     ]
 );
 
@@ -303,8 +308,8 @@ impl ProjectPanel {
                                 .detach()
                         })
                         .log_err();
-
-
+                    
+                    this.focus_in(cx);
                 }
                 mega::Event::FuseCheckout(path) => {
                     // FIXME: impl it.
@@ -330,11 +335,13 @@ impl ProjectPanel {
 
             let mut this = Self {
                 project: project.clone(),
+                mega: mega.clone(),
                 fs: workspace.app_state().fs.clone(),
                 scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
                 ancestors: Default::default(),
+                checkout_entry_id: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
@@ -541,7 +548,10 @@ impl ProjectPanel {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
-                        menu.action("New File", Box::new(NewFile))
+                        menu
+                            .action("Checkout Path", Box::new(CheckoutPath))
+                            .separator()
+                            .action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
                             .when(is_local && cfg!(target_os = "macos"), |menu| {
@@ -1321,6 +1331,15 @@ impl ProjectPanel {
                 self.autoscroll(cx);
                 cx.notify();
             }
+        }
+    }
+
+    fn checkout_specific_path(&mut self, _: &CheckoutPath, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
+            let path = entry.path.clone();
+            self.mega.update(cx, |this, cx| {
+               this.checkout_path(cx, path.to_path_buf()) 
+            });
         }
     }
 
@@ -2937,6 +2956,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
+                .on_action(cx.listener(Self::checkout_specific_path))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -3023,14 +3043,16 @@ impl Render for ProjectPanel {
                 .p_4()
                 .track_focus(&self.focus_handle)
                 .child(
-                    Button::new("open_project", "Open a project")
-                        .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, cx))
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.workspace
-                                .update(cx, |workspace, cx| workspace.open(&workspace::Open, cx))
-                                .log_err();
-                        })),
+                    // Button::new("open_project", "Open a project")
+                    //     .full_width()
+                    //     .key_binding(KeyBinding::for_action(&workspace::Open, cx))
+                    //     .on_click(cx.listener(|this, _, cx| {
+                    //         this.workspace
+                    //             .update(cx, |workspace, cx| workspace.open(&workspace::Open, cx))
+                    //             .log_err();
+                    //     })),
+                    Label::new("Run mega daemon to mount the working directories")
+                        
                 )
                 .drag_over::<ExternalPaths>(|style, _, cx| {
                     style.bg(cx.theme().colors().drop_target_background)
