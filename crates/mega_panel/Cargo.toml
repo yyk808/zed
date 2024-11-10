@@ -11,10 +11,11 @@ path = 'src/mega_panel.rs'
 workspace = true
 
 [dependencies]
+gpui = { workspace = true, features = ['test-support']}
+workspace = { workspace = true, features = ["test-support"]}
+
 mega.workspace = true
-workspace.workspace = true
 worktree.workspace = true
-gpui.workspace = true
 file_icons.workspace = true
 settings.workspace = true
 db.workspace = true

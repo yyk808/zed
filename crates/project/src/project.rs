@@ -1874,7 +1874,9 @@ impl Project {
     }
 
     pub fn is_read_only(&self, cx: &AppContext) -> bool {
-        self.is_disconnected(cx) || self.capability() == Capability::ReadOnly
+        self.is_disconnected(cx) 
+            || self.capability() == Capability::ReadOnly 
+            // || self.capability() == Capability::Fuse
     }
 
     pub fn is_local(&self) -> bool {

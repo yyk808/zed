@@ -265,7 +265,6 @@ impl MegaPanel {
 
     fn render_status(&mut self, cx: &mut ViewContext<Self>) -> Div {
         let (
-            mega_running,
             fuse_running,
             fuse_mounted
         ) = self.mega_handle.read(cx).status();
@@ -273,7 +272,6 @@ impl MegaPanel {
         v_flex()
             .gap_1()
             .children([
-                self.status_unit(cx, "Mega Backend:", mega_running),
                 self.status_unit(cx, "Scorpio Backend:", fuse_running),
                 self.status_unit(cx, "Fuse Mounted:", fuse_mounted),
             ])
@@ -292,15 +290,6 @@ impl MegaPanel {
             .id("mega-control-pad")
             .size_full()
             .children([
-                encap_btn(Button::new("btn_toggle_mega", "Toggle Mega")
-                    .full_width()
-                    .icon(IconName::Plus)
-                    .icon_position(IconPosition::Start)
-                    .on_click(cx.listener(|this, _, cx| {
-                        this.mega_handle.update(cx, |mega, cx| mega.toggle_mega(cx));
-                        this.warn_unimplemented(cx);
-                    }))
-                ),
                 encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio")
                     .full_width()
                     .icon(IconName::Plus)
@@ -373,4 +362,36 @@ impl MegaPanel {
 
 fn horizontal_separator(cx: &mut WindowContext) -> Div {
     div().mx_2().border_primary(cx).border_t_1()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use db::smol::future::FutureExt;
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+    use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_mega_panel_functions(cx: &mut TestAppContext) {
+        let state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            mega::init(cx);
+            state
+        });
+        
+        state.mega.update(cx, |this, cx| {
+            let recv = this.get_fuse_config(cx);
+            cx.spawn(|_this, _cx| async move {
+                match recv.await.unwrap() {
+                    None => panic!("Failed to get config"),
+                    Some(config) => {
+                        eprintln!("{config:?}");
+                    }
+                }
+            }).detach();
+        });
+        
+    }
+    
 }

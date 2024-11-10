@@ -611,11 +611,15 @@ impl AppState {
         let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let mega = cx.new_model(|cx| { Mega::new(cx) });
             
         theme::init(theme::LoadThemes::JustBase, cx);
         client::init(&client, cx);
         crate::init_settings(cx);
+        mega::init(cx);
+        
+        // We read settings in Mega::new()
+        // so the construction should be delayed.
+        let mega = cx.new_model(|cx| { Mega::new(cx) });
 
         Arc::new(Self {
             client,

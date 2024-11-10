@@ -81,6 +81,8 @@ pub enum Capability {
     ReadWrite,
     /// The buffer is a read-only replica.
     ReadOnly,
+    // /// The buffer is a mega-fuse replica.
+    // Fuse
 }
 
 pub type BufferRow = u32;

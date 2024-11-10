@@ -13,10 +13,13 @@ path = 'src/mega.rs'
 
 [dependencies]
 gpui.workspace = true
-reqwest_client.workspace = true
 settings.workspace = true
+reqwest_client.workspace = true
 
+futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 bytes.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
+trie-rs.workspace = true
