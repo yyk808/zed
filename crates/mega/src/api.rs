@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct MountRequest {
-    pub path: String,
+pub struct MountRequest<'a> {
+    pub path: &'a str,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -26,8 +26,8 @@ pub struct MountsResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct UmountRequest {
-    pub path: Option<String>,
+pub struct UmountRequest<'a> {
+    pub path: Option<&'a str>,
     pub inode: Option<u64>,
 }
 

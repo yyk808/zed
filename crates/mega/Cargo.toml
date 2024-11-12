@@ -22,4 +22,4 @@ serde_json.workspace = true
 bytes.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
-trie-rs.workspace = true
+radix_trie.workspace = true

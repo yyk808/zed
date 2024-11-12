@@ -312,8 +312,7 @@ impl ProjectPanel {
                     this.focus_in(cx);
                 }
                 mega::Event::FuseCheckout(path) => {
-                    // FIXME: impl it.
-                    println!("Fuse Checkout NOT implemented in project for now!");
+                    // It's not important, for now.
                 }
                 _ => {}
             }).detach();
