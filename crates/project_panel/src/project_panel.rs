@@ -291,7 +291,7 @@ impl ProjectPanel {
 
             cx.subscribe(&mega, |this, mega, mega_event, cx| match mega_event {
                 mega::Event::FuseMounted(Some(path)) => {
-                    
+                    println!("Fuse Mounted: {path:?}");
                     let path = path.to_owned();
                     this.workspace
                         .update(cx, |workspace, cx| {
@@ -310,6 +310,9 @@ impl ProjectPanel {
                         .log_err();
                     
                     this.focus_in(cx);
+                },
+                mega::Event::FuseMounted(None) => {
+                    // TODO: close the workspace
                 }
                 mega::Event::FuseCheckout(path) => {
                     // It's not important, for now.
@@ -1336,8 +1339,12 @@ impl ProjectPanel {
     fn checkout_specific_path(&mut self, _: &CheckoutPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
             let path = entry.path.clone();
-            self.mega.update(cx, |this, cx| {
-               this.checkout_path(cx, path.to_path_buf()) 
+            self.mega.update(cx, |mega, cx| {
+               let recv = mega.checkout_path(cx, path.to_path_buf()); 
+                cx.spawn(|_, _| async move {
+                    let resp = recv.await;
+                    println!("Response: {resp:?}");
+                }).detach();
             });
         }
     }
@@ -2363,7 +2370,7 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color =
+        let filename_text_color = 
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();

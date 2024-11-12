@@ -250,16 +250,8 @@ impl MegaPanel {
     }
     
     pub fn toggle_fuse_mount(&mut self, _: &ToggleFuseMount, cx: &mut ViewContext<Self>) {
-        // if let Some(workspace) = self.workspace.upgrade() {
-        //     workspace.model.update(cx, |this, mx| {
-        //         
-        //     });
-        // }
-
-        self.mega_handle.update(cx, |this, cx | { 
-            // FIXME when there's already a visible worktree, this call will create a new window.
+        self.mega_handle.update(cx, |this, cx | {
             this.toggle_mount(cx);
-            
         });
     }
 
@@ -278,7 +270,6 @@ impl MegaPanel {
     }
 
     fn render_buttons(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        
         fn encap_btn(btn: Button) -> Div {
             div()
                 .m_1()
@@ -290,12 +281,12 @@ impl MegaPanel {
             .id("mega-control-pad")
             .size_full()
             .children([
-                encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio")
+                encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio Checkouts")
                     .full_width()
                     .icon(IconName::Plus)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
-                        this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
+                        this.mega_handle.update(cx, |mega, cx| mega.toggle_fuse(cx));
                     }))
                 ),
                 // encap_btn(Button::new("btn_toggle_mount", "Toggle Mount")

@@ -120,6 +120,8 @@ impl Mega {
                     Some(info) => {
                         // Check if checkout-ed paths are correct
                         this.update(&mut cx, |mega, cx| {
+                            mega.fuse_running = true;
+                            
                             let trie = &mut mega.checkout_path;
                             for ref i in info.mounts {
                                 let missing = trie.get_ancestor(&i.path).is_none();
@@ -158,13 +160,6 @@ impl Mega {
     }
 
     pub fn toggle_fuse(&mut self, cx: &mut ModelContext<Self>) {
-        // FIXME should be able to restart fuse
-        self.fuse_running = !self.fuse_running;
-        cx.emit(Event::FuseRunning(self.fuse_running));
-    }
-
-    pub fn toggle_mount(&mut self, cx: &mut ModelContext<Self>) {
-        // TODO traverse checkout-ed paths and toggle them
         self.update_status(cx);
         let paths = &self.checkout_path;
 
@@ -186,11 +181,12 @@ impl Mega {
                         Ok(())
                     }
                 })
-                .detach();
+                    .detach();
             }
 
             self.fuse_mounted = true;
-            cx.emit(Event::FuseMounted(self.mount_point.clone()));
+            // FIXME: A configurable path from fuse api is needed.
+            cx.emit(Event::FuseMounted(Some(PathBuf::from("/home/neon/dic"))));
         } else {
             for (_, (p, &n)) in paths.iter().enumerate() {
                 let path = PathBuf::from(p); // FIXME is there a better way?
@@ -215,29 +211,12 @@ impl Mega {
             self.fuse_mounted = false;
             cx.emit(Event::FuseMounted(None));
         }
+    }
 
-        cx.spawn(|this, mut cx| async move {
-            // let client = ReqwestClient::new();
-            // let req = client.get(
-            //     "localhost:2725/api/fs/mount",
-            //     AsyncBody::empty(),
-            //     false
-            // ).await;
-            //
-            // if let Some(mega) = this.upgrade() {
-            //     let _ = mega.update(&mut cx, |this, cx| {
-            //         if this.fuse_mounted {
-            //             this.fuse_mounted = false;
-            //         } else {
-            //             // FIXME just pretending that we've got something from fuse response
-            //             this.fuse_mounted = true;
-            //             this.mount_point = Some(PathBuf::from("/home/neon/projects"));
-            //         }
-            //         cx.emit(Event::FuseMounted(this.mount_point.clone()));
-            //     });
-            // }
-        })
-        .detach();
+    pub fn toggle_mount(&mut self, cx: &mut ModelContext<Self>) {
+        // FIXME should be able to restart fuse
+        self.fuse_running = !self.fuse_running;
+        cx.emit(Event::FuseRunning(self.fuse_running));
     }
 
     pub fn checkout_path(
@@ -260,10 +239,9 @@ impl Mega {
 
         cx.spawn(|_this, _cx| async move {
             if let Ok(mut resp) = client
-                .get(
+                .post_json(
                     "http://127.0.0.1:2725/api/fs/mount",
                     AsyncBody::from(body),
-                    false,
                 )
                 .await
             {
@@ -314,10 +292,9 @@ impl Mega {
 
         cx.spawn(|_this, _cx| async move {
             if let Ok(mut resp) = client
-                .get(
+                .post_json(
                     "http://127.0.0.1:2725/api/fs/umount",
                     AsyncBody::from(body),
-                    false,
                 )
                 .await
             {
