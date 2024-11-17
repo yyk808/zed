@@ -200,7 +200,6 @@ impl MegaPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let mega_panel = cx.new_view(|cx| {
             let mega = workspace.mega();
-
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, Self::focus_in).detach();
 
@@ -208,6 +207,10 @@ impl MegaPanel {
             cx.subscribe(mega, |this, mega, event, cx| {
                 // TODO: listen for mega events
             }).detach();
+            
+            mega.update(cx, |this, cx| {
+                this.heartbeat(cx);
+            });
 
             Self {
                 mega_handle: mega.clone(),
@@ -281,6 +284,15 @@ impl MegaPanel {
             .id("mega-control-pad")
             .size_full()
             .children([
+                encap_btn(Button::new("btn_toggle_mount", "Toggle Fuse Running")
+                    .full_width()
+                    .icon(IconName::Context)
+                    .icon_position(IconPosition::Start)
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
+                        this.warn_unimplemented(cx);
+                    }))
+                ),
                 encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio Checkouts")
                     .full_width()
                     .icon(IconName::Plus)
@@ -289,15 +301,6 @@ impl MegaPanel {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_fuse(cx));
                     }))
                 ),
-                // encap_btn(Button::new("btn_toggle_mount", "Toggle Mount")
-                //     .full_width()
-                //     .icon(IconName::Context)
-                //     .icon_position(IconPosition::Start)
-                //     .on_click(cx.listener(|this, _, cx| {
-                //         this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
-                //         this.warn_unimplemented(cx);
-                //     }))
-                // ),
                 // encap_btn(Button::new("btn_checkout", "Checkout Path")
                 //     .full_width()
                 //     .icon(IconName::Check)

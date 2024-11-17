@@ -26,7 +26,6 @@ use gpui::{
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
-use remote::SshConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;

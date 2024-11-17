@@ -6,7 +6,6 @@
 //      This should be both warrantied by this module and scorpio
 // 2. At least one daemon on this machine when zed startup.
 // 3. Complete docs.
-// 4. Add settings for this module
 
 use crate::api::{
     ConfigRequest, ConfigResponse, MountRequest, MountResponse, MountsResponse, UmountRequest,
@@ -18,7 +17,7 @@ use futures::channel::oneshot;
 use futures::channel::oneshot::Receiver;
 use futures::{AsyncReadExt, FutureExt, SinkExt, TryFutureExt};
 use gpui::http_client::{AsyncBody, HttpClient, HttpRequestExt};
-use gpui::{AppContext, Context, EventEmitter, ModelContext, Path};
+use gpui::{AppContext, Context, EventEmitter, ModelContext, Path, Task};
 use radix_trie::{Trie, TrieCommon};
 use reqwest_client::ReqwestClient;
 use schemars::_private::NoSerialize;
@@ -32,6 +31,9 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, RwLock};
+use std::thread::sleep;
+use std::time::Duration;
+use futures::future::MaybeDone::Future;
 
 mod api;
 mod mega_settings;
@@ -57,6 +59,7 @@ pub struct Mega {
 
     fuse_running: bool,
     fuse_mounted: bool,
+    heartbeat: bool,
 
     mount_point: Option<PathBuf>,
     checkout_path: Trie<String, u64>,
@@ -110,6 +113,7 @@ impl Mega {
 
             fuse_running: false,
             fuse_mounted: false,
+            heartbeat: false,
 
             mount_point,
             checkout_path: Default::default(),
@@ -118,8 +122,8 @@ impl Mega {
             fuse_url,
             http_client: Arc::new(client),
         };
-        println!("Mega New: {mega:?}");
 
+        println!("Mega New: {mega:?}");
         mega
     }
 
@@ -135,6 +139,7 @@ impl Mega {
                         // So we can assume that fuse has been dead.
                         this.update(&mut cx, |mega, cx| {
                             mega.fuse_running = false;
+                            mega.fuse_mounted = false;
                             cx.emit(Event::FuseRunning(false));
                             cx.emit(Event::FuseMounted(None));
                         })
@@ -159,6 +164,7 @@ impl Mega {
             } else { Ok(()) }.unwrap();
 
             // When mount point changed, emit an event.
+            // update mount point if it's none.
             if let Ok(Some(config)) = config.await {
                 this.update(&mut cx, |this, cx| {
                     let path = PathBuf::from(config.config.mount_path);
@@ -170,6 +176,9 @@ impl Mega {
                                 cx.emit(Event::FuseMounted(this.mount_point.clone()));
                             }
                         }
+                    } else if this.fuse_running && this.mount_point.is_none() {
+                        this.mount_point = Some(path);
+                        cx.emit(Event::FuseMounted(this.mount_point.clone()));
                     }
                 })
             } else { Ok(()) }
@@ -181,9 +190,16 @@ impl Mega {
         (self.fuse_running, self.fuse_mounted)
     }
 
+    /// ## Toggle Fuse checkouts
+    /// Checkout or un-checkout the paths in zed.
+    /// Does nothing if fuse not running.
     pub fn toggle_fuse(&mut self, cx: &mut ModelContext<Self>) {
         self.update_status(cx);
         let paths = &self.checkout_path;
+        
+        if !self.fuse_running {
+            return;
+        }
 
         if !self.fuse_mounted {
             for (_, (p, _)) in paths.iter().enumerate() {
@@ -206,8 +222,7 @@ impl Mega {
             }
 
             self.fuse_mounted = true;
-            // FIXME: A configurable path from fuse api is needed.
-            cx.emit(Event::FuseMounted(Some(PathBuf::from("/home/neon/dic"))));
+            cx.emit(Event::FuseMounted(self.mount_point.clone()));
         } else {
             for (_, (p, &n)) in paths.iter().enumerate() {
                 let path = PathBuf::from(p); // FIXME is there a better way?
@@ -234,10 +249,19 @@ impl Mega {
         }
     }
 
+    /// ## Toggle Fuse Mount
+    /// In fact, we cannot `mount` or `umount` a fuse from zed.
+    /// 
+    /// This function only opens up a new scorpio executable if it detects fuse not running.
     pub fn toggle_mount(&mut self, cx: &mut ModelContext<Self>) {
-        // FIXME should be able to restart fuse
-        self.fuse_running = !self.fuse_running;
-        cx.emit(Event::FuseRunning(self.fuse_running));
+        // We only start it, not stop it.
+        if !self.fuse_running {
+            let _ = Command::new(self.fuse_executable.as_os_str())
+                .spawn()
+                .expect("Fuse Executable path not right");
+            
+            self.update_status(cx);
+        }
     }
 
     pub fn checkout_path(
@@ -445,6 +469,25 @@ impl Mega {
         .detach();
 
         rx
+    }
+    
+    pub fn heartbeat(&mut self, cx: &mut ModelContext<Self>) {
+        if self.heartbeat {
+            return;
+        } else {
+            self.heartbeat = true;
+        }
+        
+        cx.spawn(|this, mut cx| async move {
+            loop {
+                this.update(&mut cx, |mega, cx| {
+                    mega.update_status(cx);
+                }).expect("mega delegate not be dropped");
+                
+                let dur = Duration::from_secs(30);
+                cx.background_executor().timer(dur).await;
+            }
+        }).detach();
     }
     
     pub fn is_path_checkout(&self, path: &String) -> bool {
