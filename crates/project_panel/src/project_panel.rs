@@ -45,7 +45,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
+use ui::{prelude::*, v_flex, ContextMenu, Icon, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -287,12 +287,12 @@ impl ProjectPanel {
             )
             .detach();
 
-            cx.subscribe(&mega, |this, mega, mega_event, cx| match mega_event {
+            cx.subscribe(&mega, |this, _, mega_event, cx| match mega_event {
                 mega::Event::FuseMounted(Some(path)) => {
                     println!("Fuse Mounted: {path:?}");
                     let path = path.to_owned();
                     this.workspace
-                        .update(cx, |workspace, cx| {
+                        .update(cx, |_, cx| {
                             cx.spawn(|this, mut cx| async move {
                                 if let Some(task) = this
                                     .update(&mut cx, |this, cx| {
@@ -312,7 +312,7 @@ impl ProjectPanel {
                 mega::Event::FuseMounted(None) => {
                     // TODO: close the workspace
                 }
-                mega::Event::FuseCheckout(path) => {
+                mega::Event::FuseCheckout(_path) => {
                     // It's not important, for now.
                 }
                 _ => {}
@@ -1343,7 +1343,7 @@ impl ProjectPanel {
     }
 
     fn checkout_specific_path(&mut self, _: &CheckoutPath, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
+        if let Some((_, entry)) = self.selected_entry_handle(cx) {
             let path = entry.path.clone();
             self.mega.update(cx, |mega, cx| {
                 let recv = mega.checkout_path(cx, path.to_path_buf());
@@ -1365,7 +1365,7 @@ impl ProjectPanel {
     }
 
     fn commit_specific_path(&mut self, _: &CommitPath, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
+        if let Some((_, entry)) = self.selected_entry_handle(cx) {
             let path = entry.path.clone();
             self.mega.update(cx, |mega, cx| {
                 let recv = mega.restore_path(cx, path.to_path_buf());
@@ -2395,7 +2395,6 @@ impl ProjectPanel {
         details: EntryDetails,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
-        let mega = self.mega.read(cx);
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;

@@ -1,38 +1,20 @@
-// This crate delegate mega and its fuse daemon.
-// The following requirements should be met:
-//
-// TODO:
-// 1. Only one daemon on this machine.
-//      This should be both warrantied by this module and scorpio
-// 2. At least one daemon on this machine when zed startup.
-// 3. Complete docs.
-
 use crate::api::{
     ConfigRequest, ConfigResponse, MountRequest, MountResponse, MountsResponse, UmountRequest,
     UmountResponse,
 };
 use crate::mega_settings::MegaSettings;
-use crate::Event::FuseMounted;
 use futures::channel::oneshot;
 use futures::channel::oneshot::Receiver;
-use futures::future::MaybeDone::Future;
-use futures::{AsyncReadExt, FutureExt, SinkExt, TryFutureExt};
-use gpui::http_client::{AsyncBody, HttpClient, HttpRequestExt};
-use gpui::{AppContext, Context, EventEmitter, ModelContext, Path, Task};
+use futures::AsyncReadExt;
+use gpui::http_client::{AsyncBody, HttpClient};
+use gpui::{AppContext, EventEmitter, ModelContext};
 use radix_trie::{Trie, TrieCommon};
 use reqwest_client::ReqwestClient;
-use schemars::_private::NoSerialize;
-use serde::Serialize;
 use settings::Settings;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::ffi::OsStr;
 use std::fmt::{Debug, Formatter};
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Arc, RwLock};
-use std::thread::sleep;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub mod api;
@@ -234,12 +216,10 @@ impl Mega {
                 let path = PathBuf::from(p); // FIXME is there a better way?
                 cx.spawn(|mega, mut cx| async move {
                     let recv = mega
-                        .update(&mut cx, |this, cx| {
-                            this.restore_path(cx, path)
-                        })
+                        .update(&mut cx, |this, cx| this.restore_path(cx, path))
                         .expect("mega delegate not be dropped");
 
-                    if let Ok(Some(resp)) = recv.await {
+                    if let Ok(Some(_resp)) = recv.await {
                         mega.update(&mut cx, |this, cx| {
                             // TODO use a new check out state struct
                             cx.emit(Event::FuseCheckout(None));
@@ -250,9 +230,6 @@ impl Mega {
                 })
                 .detach();
             }
-
-            self.fuse_mounted = false;
-            cx.emit(Event::FuseMounted(None));
         }
     }
 
@@ -460,7 +437,14 @@ impl Mega {
 
     pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: String, inode: u64) {
         if self.mount_point.is_some() {
-            let path = self.mount_point.clone().unwrap().to_str().unwrap().to_string() + path.as_str();
+            let path = self
+                .mount_point
+                .clone()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+                + path.as_str();
             self.checkout_path.insert(path, inode);
             cx.emit(Event::FuseCheckout(None));
         }
