@@ -385,7 +385,7 @@
     // Url to communicate with fuse
     "fuse_url": "http://localhost:2725",
     // Default mount point for fuse
-    "mount_point": "/home/neon/projects",
+    "mount_point": "/home/neon/dic",
     // Path for mega executable
     "mega_executable": "mega",
     // Path for fuse executable

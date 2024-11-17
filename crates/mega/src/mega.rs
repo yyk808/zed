@@ -15,6 +15,7 @@ use crate::mega_settings::MegaSettings;
 use crate::Event::FuseMounted;
 use futures::channel::oneshot;
 use futures::channel::oneshot::Receiver;
+use futures::future::MaybeDone::Future;
 use futures::{AsyncReadExt, FutureExt, SinkExt, TryFutureExt};
 use gpui::http_client::{AsyncBody, HttpClient, HttpRequestExt};
 use gpui::{AppContext, Context, EventEmitter, ModelContext, Path, Task};
@@ -33,9 +34,8 @@ use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::thread::sleep;
 use std::time::Duration;
-use futures::future::MaybeDone::Future;
 
-mod api;
+pub mod api;
 mod mega_settings;
 
 pub fn init(cx: &mut AppContext) {
@@ -52,6 +52,7 @@ pub enum Event {
 struct CheckoutState {
     path: PathBuf,
     mounted: bool,
+    notify: bool,
 }
 
 pub struct Mega {
@@ -75,11 +76,10 @@ impl EventEmitter<Event> for Mega {}
 
 impl Debug for Mega {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, 
-               "fuse_executable: {:?}, mega_url: {}, fuse_url: {}",
-               self.fuse_executable, 
-               self.mega_url, 
-               self.fuse_url
+        write!(
+            f,
+            "fuse_executable: {:?}, mega_url: {}, fuse_url: {}",
+            self.fuse_executable, self.mega_url, self.fuse_url
         )
     }
 }
@@ -148,28 +148,32 @@ impl Mega {
                         // Check if checkout-ed paths are correct
                         this.update(&mut cx, |mega, cx| {
                             mega.fuse_running = true;
-                            
+
                             let trie = &mut mega.checkout_path;
                             for ref i in info.mounts {
                                 let missing = trie.get_ancestor(&i.path).is_none();
                                 if missing {
                                     // Should not happen unless on startup.
                                     trie.insert(i.path.clone(), i.inode);
-                                    cx.emit(Event::FuseCheckout(Some(PathBuf::from(i.path.clone()))))
+                                    cx.emit(Event::FuseCheckout(Some(PathBuf::from(
+                                        i.path.clone(),
+                                    ))))
                                 }
                             }
                         })
                     }
                 }
-            } else { Ok(()) }.unwrap();
+            } else {
+                Ok(())
+            }
+            .unwrap();
 
             // When mount point changed, emit an event.
             // update mount point if it's none.
             if let Ok(Some(config)) = config.await {
                 this.update(&mut cx, |this, cx| {
                     let path = PathBuf::from(config.config.mount_path);
-                    if (this.fuse_mounted && this.fuse_running)
-                    && this.mount_point.is_some() {
+                    if (this.fuse_mounted && this.fuse_running) && this.mount_point.is_some() {
                         if let Some(inner) = &this.mount_point {
                             if !inner.eq(&path) {
                                 this.mount_point = Some(path);
@@ -181,7 +185,9 @@ impl Mega {
                         cx.emit(Event::FuseMounted(this.mount_point.clone()));
                     }
                 })
-            } else { Ok(()) }
+            } else {
+                Ok(())
+            }
         })
         .detach();
     }
@@ -196,7 +202,7 @@ impl Mega {
     pub fn toggle_fuse(&mut self, cx: &mut ModelContext<Self>) {
         self.update_status(cx);
         let paths = &self.checkout_path;
-        
+
         if !self.fuse_running {
             return;
         }
@@ -205,9 +211,9 @@ impl Mega {
             for (_, (p, _)) in paths.iter().enumerate() {
                 let path = PathBuf::from(p); // FIXME is there a better way?
                 cx.spawn(|mega, mut cx| async move {
-                    let recv = mega.update(&mut cx, |this, cx| {
-                        this.checkout_path(cx, path)
-                    }).expect("mega delegate not be dropped");
+                    let recv = mega
+                        .update(&mut cx, |this, cx| this.checkout_path(cx, path))
+                        .expect("mega delegate not be dropped");
 
                     if let Ok(Some(resp)) = recv.await {
                         mega.update(&mut cx, |this, cx| {
@@ -218,19 +224,20 @@ impl Mega {
                         Ok(())
                     }
                 })
-                    .detach();
+                .detach();
             }
 
             self.fuse_mounted = true;
             cx.emit(Event::FuseMounted(self.mount_point.clone()));
         } else {
-            for (_, (p, &n)) in paths.iter().enumerate() {
+            for (_, (p, _)) in paths.iter().enumerate() {
                 let path = PathBuf::from(p); // FIXME is there a better way?
                 cx.spawn(|mega, mut cx| async move {
-                    let recv = mega.update(&mut cx, |this, cx| {
-                        let param = PathBuf::from(path);
-                        this.restore_path(cx, param, n)
-                    }).expect("mega delegate not be dropped");
+                    let recv = mega
+                        .update(&mut cx, |this, cx| {
+                            this.restore_path(cx, path)
+                        })
+                        .expect("mega delegate not be dropped");
 
                     if let Ok(Some(resp)) = recv.await {
                         mega.update(&mut cx, |this, cx| {
@@ -241,7 +248,7 @@ impl Mega {
                         Ok(())
                     }
                 })
-                    .detach();
+                .detach();
             }
 
             self.fuse_mounted = false;
@@ -251,7 +258,7 @@ impl Mega {
 
     /// ## Toggle Fuse Mount
     /// In fact, we cannot `mount` or `umount` a fuse from zed.
-    /// 
+    ///
     /// This function only opens up a new scorpio executable if it detects fuse not running.
     pub fn toggle_mount(&mut self, cx: &mut ModelContext<Self>) {
         // We only start it, not stop it.
@@ -259,7 +266,7 @@ impl Mega {
             let _ = Command::new(self.fuse_executable.as_os_str())
                 .spawn()
                 .expect("Fuse Executable path not right");
-            
+
             self.update_status(cx);
         }
     }
@@ -271,10 +278,7 @@ impl Mega {
     ) -> Receiver<Option<MountResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
-        let uri = format!(
-            "{base}/api/fs/mount",
-            base = self.fuse_url
-        );
+        let uri = format!("{base}/api/fs/mount", base = self.fuse_url);
 
         // If it panics, that means there's a bug in code.
         let path = path.to_str().unwrap();
@@ -282,13 +286,7 @@ impl Mega {
         let body = serde_json::to_string(&req).unwrap();
 
         cx.spawn(|_this, _cx| async move {
-            if let Ok(mut resp) = client
-                .post_json(
-                    uri.as_str(),
-                    AsyncBody::from(body),
-                )
-                .await
-            {
+            if let Ok(mut resp) = client.post_json(uri.as_str(), AsyncBody::from(body)).await {
                 if resp.status().is_success() {
                     let mut buf = Vec::new();
                     resp.body_mut().read_to_end(&mut buf).await.unwrap();
@@ -308,39 +306,27 @@ impl Mega {
         rx
     }
 
-    pub fn checkout_multi_path(&mut self, cx: &mut ModelContext<Self>, mut path: Vec<PathBuf>) {
-        unimplemented!()
-    }
-
     pub fn restore_path(
         &self,
         cx: &ModelContext<Self>,
         path: PathBuf,
-        inode: u64,
     ) -> Receiver<Option<UmountResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
-        let uri = format!(
-            "{base}/api/fs/umount",
-            base = self.fuse_url
-        );
+        let uri = format!("{base}/api/fs/umount", base = self.fuse_url);
 
-        // If it panics, that means there's a bug in code.
+        // If panics here, that means there's a bug in code.
+        // maybe we should ensure every path absolute?
         let path = path.to_str().unwrap();
+        let inode = self.checkout_path.get_ancestor_value(path);
         let req = UmountRequest {
             path: Some(path),
-            inode: Some(inode),
+            inode: Some(inode.unwrap().to_owned()),
         };
         let body = serde_json::to_string(&req).unwrap();
 
         cx.spawn(|_this, _cx| async move {
-            if let Ok(mut resp) = client
-                .post_json(
-                    uri.as_str(),
-                    AsyncBody::from(body),
-                )
-                .await
-            {
+            if let Ok(mut resp) = client.post_json(uri.as_str(), AsyncBody::from(body)).await {
                 if resp.status().is_success() {
                     let mut buf = Vec::new();
                     resp.body_mut().read_to_end(&mut buf).await.unwrap();
@@ -363,20 +349,10 @@ impl Mega {
     pub fn get_checkout_paths(&self, cx: &ModelContext<Self>) -> Receiver<Option<MountsResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
-        let uri = format!(
-            "{base}/api/fs/mpoint",
-            base = self.fuse_url
-        );
+        let uri = format!("{base}/api/fs/mpoint", base = self.fuse_url);
 
         cx.spawn(|_this, _cx| async move {
-            if let Ok(mut resp) = client
-                .get(
-                    uri.as_str(),
-                    AsyncBody::empty(),
-                    false,
-                )
-                .await
-            {
+            if let Ok(mut resp) = client.get(uri.as_str(), AsyncBody::empty(), false).await {
                 if resp.status().is_success() {
                     let mut buf = Vec::new();
                     resp.body_mut().read_to_end(&mut buf).await.unwrap();
@@ -399,20 +375,10 @@ impl Mega {
     pub fn get_fuse_config(&self, cx: &ModelContext<Self>) -> Receiver<Option<ConfigResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
-        let uri = format!(
-            "{base}/api/config",
-            base = self.fuse_url
-        );
+        let uri = format!("{base}/api/config", base = self.fuse_url);
 
         cx.spawn(|_this, _cx| async move {
-            if let Ok(mut resp) = client
-                .get(
-                    uri.as_str(),
-                    AsyncBody::empty(),
-                    false,
-                )
-                .await
-            {
+            if let Ok(mut resp) = client.get(uri.as_str(), AsyncBody::empty(), false).await {
                 if resp.status().is_success() {
                     let mut buf = Vec::new();
                     resp.body_mut().read_to_end(&mut buf).await.unwrap();
@@ -435,10 +401,7 @@ impl Mega {
     pub fn set_fuse_config(&self, cx: &mut ModelContext<Self>) -> Receiver<Option<ConfigResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
-        let uri = format!(
-            "{base}/api/config",
-            base = self.fuse_url
-        );
+        let uri = format!("{base}/api/config", base = self.fuse_url);
         let config = ConfigRequest {
             mega_url: None,
             mount_path: None,
@@ -448,10 +411,7 @@ impl Mega {
         let config = serde_json::to_string(&config).unwrap();
 
         cx.spawn(|_this, _cx| async move {
-            if let Ok(mut resp) = client
-                .post_json(uri.as_str(), config.into())
-                .await
-            {
+            if let Ok(mut resp) = client.post_json(uri.as_str(), config.into()).await {
                 if resp.status().is_success() {
                     let mut buf = Vec::new();
                     resp.body_mut().read_to_end(&mut buf).await.unwrap();
@@ -470,28 +430,44 @@ impl Mega {
 
         rx
     }
-    
+
     pub fn heartbeat(&mut self, cx: &mut ModelContext<Self>) {
         if self.heartbeat {
             return;
         } else {
             self.heartbeat = true;
         }
-        
+
         cx.spawn(|this, mut cx| async move {
             loop {
                 this.update(&mut cx, |mega, cx| {
                     mega.update_status(cx);
-                }).expect("mega delegate not be dropped");
-                
+                })
+                .expect("mega delegate not be dropped");
+
                 let dur = Duration::from_secs(30);
                 cx.background_executor().timer(dur).await;
             }
-        }).detach();
+        })
+        .detach();
     }
-    
-    pub fn is_path_checkout(&self, path: &String) -> bool {
+
+    pub fn is_path_checkout(&self, path: PathBuf) -> bool {
         let set = &self.checkout_path;
-        set.get_ancestor(path).is_some()
+
+        set.get_ancestor(path.to_str().unwrap()).is_some()
+    }
+
+    pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: String, inode: u64) {
+        if self.mount_point.is_some() {
+            let path = self.mount_point.clone().unwrap().to_str().unwrap().to_string() + path.as_str();
+            self.checkout_path.insert(path, inode);
+            cx.emit(Event::FuseCheckout(None));
+        }
+    }
+
+    pub fn mark_commited(&mut self, cx: &mut ModelContext<Self>, path: PathBuf) {
+        self.checkout_path.remove(path.to_str().unwrap());
+        cx.emit(Event::FuseCheckout(None));
     }
 }

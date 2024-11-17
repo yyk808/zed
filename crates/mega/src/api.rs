@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+const SUCCESS: &str   = "Success";
+const FAIL : &str   = "Fail";
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MountRequest<'a> {
     pub path: &'a str,
@@ -55,4 +57,49 @@ pub struct ConfigRequest {
     pub mega_url: Option<String>,
     pub mount_path: Option<String>,
     pub store_path: Option<String>,
+}
+
+pub trait FuseResponse {
+    fn is_resp_succeed(&self) -> bool;
+    fn is_resp_failed(&self) -> bool;
+}
+
+impl FuseResponse for MountResponse {
+    fn is_resp_succeed(&self) -> bool {
+        self.status.eq(SUCCESS)
+    }
+
+    fn is_resp_failed(&self) -> bool {
+        self.status.eq(FAIL)
+    }
+}
+
+impl FuseResponse for MountsResponse {
+    fn is_resp_succeed(&self) -> bool {
+        self.status.eq(SUCCESS)
+    }
+
+    fn is_resp_failed(&self) -> bool {
+        self.status.eq(FAIL)
+    }
+}
+
+impl FuseResponse for UmountResponse {
+    fn is_resp_succeed(&self) -> bool {
+        self.status.eq(SUCCESS)
+    }
+
+    fn is_resp_failed(&self) -> bool {
+        self.status.eq(FAIL)
+    }
+}
+
+impl FuseResponse for ConfigResponse {
+    fn is_resp_succeed(&self) -> bool {
+        self.status.eq(SUCCESS)
+    }
+
+    fn is_resp_failed(&self) -> bool {
+        self.status.eq(FAIL)
+    }
 }

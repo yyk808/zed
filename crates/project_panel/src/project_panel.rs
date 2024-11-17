@@ -15,6 +15,7 @@ use file_icons::FileIcons;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use core::f32;
+use db::write_and_log;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
@@ -26,6 +27,7 @@ use gpui::{
     WindowContext,
 };
 use indexmap::IndexMap;
+use mega::{api::FuseResponse, Mega};
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
@@ -43,8 +45,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use db::write_and_log;
-use mega::Mega;
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
@@ -59,7 +59,6 @@ const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
-    // TODO: use segment tree to fastly store multiple checkout path,
     project: Model<Project>,
     mega: Model<Mega>,
     fs: Arc<dyn Fs>,
@@ -70,7 +69,6 @@ pub struct ProjectPanel {
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
-    checkout_entry_id: Option<ProjectEntryId>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
@@ -169,6 +167,7 @@ actions!(
         FoldDirectory,
         SelectParent,
         CheckoutPath,
+        CommitPath,
     ]
 );
 
@@ -298,19 +297,19 @@ impl ProjectPanel {
                             cx.spawn(|this, mut cx| async move {
                                 if let Some(task) = this
                                     .update(&mut cx, |this, cx| {
-                                        this.open_workspace_for_paths(false, vec!(path), cx)
+                                        this.open_workspace_for_paths(false, vec![path], cx)
                                     })
                                     .log_err()
                                 {
                                     task.await.log_err();
                                 }
                             })
-                                .detach()
+                            .detach()
                         })
                         .log_err();
-                    
+
                     this.focus_in(cx);
-                },
+                }
                 mega::Event::FuseMounted(None) => {
                     // TODO: close the workspace
                 }
@@ -318,7 +317,8 @@ impl ProjectPanel {
                     // It's not important, for now.
                 }
                 _ => {}
-            }).detach();
+            })
+            .detach();
 
             cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
@@ -343,7 +343,6 @@ impl ProjectPanel {
                 focus_handle,
                 visible_entries: Default::default(),
                 ancestors: Default::default(),
-                checkout_entry_id: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
@@ -519,6 +518,7 @@ impl ProjectPanel {
     ) {
         let this = cx.view().clone();
         let project = self.project.read(cx);
+        let mega = self.mega.read(cx);
 
         let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
             id
@@ -542,6 +542,7 @@ impl ProjectPanel {
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
             let is_local = project.is_local();
+            let is_checkout = mega.is_path_checkout(entry.path.to_path_buf());
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -550,73 +551,81 @@ impl ProjectPanel {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
-                        menu
-                            .action("Checkout Path", Box::new(CheckoutPath))
-                            .separator()
-                            .action("New File", Box::new(NewFile))
-                            .action("New Folder", Box::new(NewDirectory))
-                            .separator()
-                            .when(is_local && cfg!(target_os = "macos"), |menu| {
-                                menu.action("Reveal in Finder", Box::new(RevealInFileManager))
-                            })
-                            .when(is_local && cfg!(not(target_os = "macos")), |menu| {
-                                menu.action("Reveal in File Manager", Box::new(RevealInFileManager))
-                            })
-                            .when(is_local, |menu| {
-                                menu.action("Open in Default App", Box::new(OpenWithSystem))
-                            })
-                            .action("Open in Terminal", Box::new(OpenInTerminal))
-                            .when(is_dir, |menu| {
-                                menu.separator()
-                                    .action("Find in Folder…", Box::new(NewSearchInDirectory))
-                            })
-                            .when(is_unfoldable, |menu| {
-                                menu.action("Unfold Directory", Box::new(UnfoldDirectory))
-                            })
-                            .when(is_foldable, |menu| {
-                                menu.action("Fold Directory", Box::new(FoldDirectory))
-                            })
-                            .separator()
-                            .action("Cut", Box::new(Cut))
-                            .action("Copy", Box::new(Copy))
-                            .action("Duplicate", Box::new(Duplicate))
-                            // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .map(|menu| {
-                                if self.clipboard.as_ref().is_some() {
-                                    menu.action("Paste", Box::new(Paste))
-                                } else {
-                                    menu.disabled_action("Paste", Box::new(Paste))
-                                }
-                            })
-                            .separator()
-                            .action("Copy Path", Box::new(CopyPath))
-                            .action("Copy Relative Path", Box::new(CopyRelativePath))
-                            .separator()
-                            .action("Rename", Box::new(Rename))
-                            .when(!is_root, |menu| {
-                                menu.action("Trash", Box::new(Trash { skip_prompt: false }))
-                                    .action("Delete", Box::new(Delete { skip_prompt: false }))
-                            })
-                            .when(!is_remote & is_root, |menu| {
-                                menu.separator()
-                                    .action(
-                                        "Add Folder to Project…",
-                                        Box::new(workspace::AddFolderToProject),
+                        menu.when(!is_checkout && !is_root, |menu| {
+                            menu.action("Checkout Path", Box::new(CheckoutPath))
+                        })
+                        .when(is_checkout, |menu| {
+                            menu.action("Commit Path", Box::new(CommitPath))
+                                .separator()
+                                .action("New File", Box::new(NewFile))
+                                .action("New Folder", Box::new(NewDirectory))
+                                .separator()
+                                .when(is_local && cfg!(target_os = "macos"), |menu| {
+                                    menu.action("Reveal in Finder", Box::new(RevealInFileManager))
+                                })
+                                .when(is_local && cfg!(not(target_os = "macos")), |menu| {
+                                    menu.action(
+                                        "Reveal in File Manager",
+                                        Box::new(RevealInFileManager),
                                     )
-                                    .entry(
-                                        "Remove from Project",
-                                        None,
-                                        cx.handler_for(&this, move |this, cx| {
-                                            this.project.update(cx, |project, cx| {
-                                                project.remove_worktree(worktree_id, cx)
-                                            });
-                                        }),
-                                    )
-                            })
-                            .when(is_root, |menu| {
-                                menu.separator()
-                                    .action("Collapse All", Box::new(CollapseAllEntries))
-                            })
+                                })
+                                .when(is_local, |menu| {
+                                    menu.action("Open in Default App", Box::new(OpenWithSystem))
+                                })
+                                .action("Open in Terminal", Box::new(OpenInTerminal))
+                                .when(is_dir, |menu| {
+                                    menu.separator()
+                                        .action("Find in Folder…", Box::new(NewSearchInDirectory))
+                                })
+                                .when(is_unfoldable, |menu| {
+                                    menu.action("Unfold Directory", Box::new(UnfoldDirectory))
+                                })
+                                .when(is_foldable, |menu| {
+                                    menu.action("Fold Directory", Box::new(FoldDirectory))
+                                })
+                                .separator()
+                                .action("Cut", Box::new(Cut))
+                                .action("Copy", Box::new(Copy))
+                                .action("Duplicate", Box::new(Duplicate))
+                                // TODO: Paste should always be visible, cbut disabled when clipboard is empty
+                                .map(|menu| {
+                                    if self.clipboard.as_ref().is_some() {
+                                        menu.action("Paste", Box::new(Paste))
+                                    } else {
+                                        menu.disabled_action("Paste", Box::new(Paste))
+                                    }
+                                })
+                                .separator()
+                                .action("Copy Path", Box::new(CopyPath))
+                                .action("Copy Relative Path", Box::new(CopyRelativePath))
+                                .separator()
+                                // Fuse not support renaming, currently.
+                                // .action("Rename", Box::new(Rename))
+                                .when(!is_root, |menu| {
+                                    menu.action("Trash", Box::new(Trash { skip_prompt: false }))
+                                        .action("Delete", Box::new(Delete { skip_prompt: false }))
+                                })
+                                .when(!is_remote & is_root, |menu| {
+                                    menu.separator()
+                                        .action(
+                                            "Add Folder to Project…",
+                                            Box::new(workspace::AddFolderToProject),
+                                        )
+                                        .entry(
+                                            "Remove from Project",
+                                            None,
+                                            cx.handler_for(&this, move |this, cx| {
+                                                this.project.update(cx, |project, cx| {
+                                                    project.remove_worktree(worktree_id, cx)
+                                                });
+                                            }),
+                                        )
+                                })
+                                .when(is_root, |menu| {
+                                    menu.separator()
+                                        .action("Collapse All", Box::new(CollapseAllEntries))
+                                })
+                        })
                     }
                 })
             });
@@ -1340,11 +1349,42 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
             let path = entry.path.clone();
             self.mega.update(cx, |mega, cx| {
-               let recv = mega.checkout_path(cx, path.to_path_buf()); 
-                cx.spawn(|_, _| async move {
+                let recv = mega.checkout_path(cx, path.to_path_buf());
+                cx.spawn(|this, mut cx| async move {
                     let resp = recv.await;
                     println!("Response: {resp:?}");
-                }).detach();
+                    if let Ok(Some(resp)) = resp {
+                        if resp.is_resp_succeed() {
+                            this.update(&mut cx, |mega, cx| {
+                                mega.mark_checkout(cx, resp.mount.path, resp.mount.inode);
+                            })
+                            .expect("Mega delegate not been dropped");
+                        }
+                    }
+                })
+                .detach();
+            });
+        }
+    }
+
+    fn commit_specific_path(&mut self, _: &CommitPath, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry_handle(cx) {
+            let path = entry.path.clone();
+            self.mega.update(cx, |mega, cx| {
+                let recv = mega.restore_path(cx, path.to_path_buf());
+                cx.spawn(|this, mut cx| async move {
+                    let resp = recv.await;
+                    println!("Response: {resp:?}");
+                    if let Ok(Some(resp)) = resp {
+                        if resp.is_resp_succeed() {
+                            this.update(&mut cx, |mega, cx| {
+                                mega.mark_commited(cx, path.to_path_buf());
+                            })
+                                .expect("Mega delegate not been dropped");
+                        }
+                    }
+                })
+                    .detach();
             });
         }
     }
@@ -2358,6 +2398,7 @@ impl ProjectPanel {
         details: EntryDetails,
         cx: &mut ViewContext<Self>,
     ) -> Stateful<Div> {
+        let mega = self.mega.read(cx);
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
@@ -2370,7 +2411,7 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = 
+        let filename_text_color =
             entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
@@ -2963,6 +3004,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::checkout_specific_path))
+                .on_action(cx.listener(Self::commit_specific_path))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -3057,8 +3099,7 @@ impl Render for ProjectPanel {
                     //             .update(cx, |workspace, cx| workspace.open(&workspace::Open, cx))
                     //             .log_err();
                     //     })),
-                    Label::new("Run mega daemon to mount the working directories")
-                        
+                    Label::new("Run mega daemon to mount the working directories"),
                 )
                 .drag_over::<ExternalPaths>(|style, _, cx| {
                     style.bg(cx.theme().colors().drop_target_background)

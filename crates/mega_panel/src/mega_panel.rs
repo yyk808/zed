@@ -290,7 +290,6 @@ impl MegaPanel {
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
-                        this.warn_unimplemented(cx);
                     }))
                 ),
                 encap_btn(Button::new("btn_toggle_scorpio", "Toggle Scorpio Checkouts")
@@ -301,33 +300,6 @@ impl MegaPanel {
                         this.mega_handle.update(cx, |mega, cx| mega.toggle_fuse(cx));
                     }))
                 ),
-                // encap_btn(Button::new("btn_checkout", "Checkout Path")
-                //     .full_width()
-                //     .icon(IconName::Check)
-                //     .icon_position(IconPosition::Start)
-                //     .on_click(cx.listener(|this, _, cx| {
-                //         this.warn_unimplemented(cx);
-                //         let options = PathPromptOptions {
-                //             files: true,
-                //             directories: true,
-                //             multiple: false,
-                //         };
-                //         
-                //         let abs_path = cx.prompt_for_paths(options);
-                // 
-                //         // Why so annoying...
-                //         let mega = this.mega_handle.clone();
-                //         cx.spawn(|this, mut cx|async move {
-                //             // mega.update(&mut cx, |this, cx| async move {
-                //             //     if let Ok(Ok(Some(result))) = abs_path.await {
-                //             //         this.checkout_multi_path(cx, result);
-                //             //     }
-                //             // }).log_err();
-                //             
-                //         }) .detach();
-                //         
-                //     }))
-                // ),
             ])
     }
 
