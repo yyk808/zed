@@ -17,23 +17,23 @@ pub struct MegaSettingsContent {
     /// Url to communicate with mega
     ///
     /// Default: http://localhost:8000
-    pub mega_url: String,
+    pub mega_url: Option<String>,
     /// Url to communicate with fuse
     ///
     /// Default: http://localhost:2725
-    pub fuse_url: String,
+    pub fuse_url: Option<String>,
     /// Default mount point for fuse
     ///
     /// Default: "/" (for now)
-    pub mount_point: PathBuf,
+    pub mount_point: Option<PathBuf>,
     /// Path for mega executable
     ///
     /// Default: "mega" (for now)
-    pub mega_executable: PathBuf,
+    pub mega_executable: Option<PathBuf>,
     /// Path for fuse executable
     ///
     /// Default: "scorpio" (for now)
-    pub fuse_executable: PathBuf,
+    pub fuse_executable: Option<PathBuf>,
 }
 
 impl Settings for MegaSettings {
