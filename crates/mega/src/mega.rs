@@ -1,4 +1,4 @@
-use crate::api::{
+use utils::api::{
     ConfigRequest, ConfigResponse, MountRequest, MountResponse, MountsResponse, UmountRequest,
     UmountResponse,
 };
@@ -17,8 +17,8 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub mod api;
 mod mega_settings;
+pub mod utils;
 
 pub fn init(cx: &mut AppContext) {
     Mega::init(cx);
@@ -31,6 +31,7 @@ pub enum Event {
     FuseCheckout(Option<PathBuf>),
 }
 
+#[allow(unused)]
 struct CheckoutState {
     path: PathBuf,
     mounted: bool,
@@ -90,7 +91,7 @@ impl Mega {
             None
         };
 
-        let mega = Mega {
+        Mega {
             fuse_executable,
 
             fuse_running: false,
@@ -103,10 +104,7 @@ impl Mega {
             mega_url,
             fuse_url,
             http_client: Arc::new(client),
-        };
-
-        println!("Mega New: {mega:?}");
-        mega
+        }
     }
 
     pub fn update_status(&mut self, cx: &mut ModelContext<Self>) {
@@ -198,7 +196,7 @@ impl Mega {
                         .expect("mega delegate not be dropped");
 
                     if let Ok(Some(resp)) = recv.await {
-                        mega.update(&mut cx, |this, cx| {
+                        mega.update(&mut cx, |_, cx| {
                             let buf = PathBuf::from(resp.mount.path.clone());
                             cx.emit(Event::FuseCheckout(Some(buf)));
                         })
@@ -220,7 +218,7 @@ impl Mega {
                         .expect("mega delegate not be dropped");
 
                     if let Ok(Some(_resp)) = recv.await {
-                        mega.update(&mut cx, |this, cx| {
+                        mega.update(&mut cx, |_, cx| {
                             // TODO use a new check out state struct
                             cx.emit(Event::FuseCheckout(None));
                         })
