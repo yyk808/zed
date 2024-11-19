@@ -26,7 +26,8 @@ use gpui::{
     WindowContext,
 };
 use indexmap::IndexMap;
-use mega::{api::FuseResponse, Mega};
+use mega::utils::api::FuseResponse;
+use mega::Mega;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
@@ -44,6 +45,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use std::ops::Deref;
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
@@ -114,6 +116,8 @@ struct EntryDetails {
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
+    is_checkout: bool,
+    is_checkout_root: bool,
     is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
@@ -530,8 +534,8 @@ impl ProjectPanel {
             entry_id,
         });
 
-        // FIXME add fuse dir specific behaviors
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
+            let pb: PathBuf = entry.path.to_path_buf();
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
@@ -541,7 +545,8 @@ impl ProjectPanel {
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
             let is_local = project.is_local();
-            let is_checkout = mega.is_path_checkout(entry.path.to_path_buf());
+            let is_checkout = mega.is_path_checkout(&pb);
+            let is_checkout_root = mega.is_path_checkout_root(&pb);
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -553,9 +558,11 @@ impl ProjectPanel {
                         menu.when(!is_checkout && !is_root, |menu| {
                             menu.action("Checkout Path", Box::new(CheckoutPath))
                         })
-                        .when(is_checkout, |menu| {
+                        .when(is_checkout && is_checkout_root, |menu| {
                             menu.action("Commit Path", Box::new(CommitPath))
-                                .separator()
+                        })
+                        .when(is_checkout && !is_checkout_root, |menu| {
+                            menu.separator()
                                 .action("New File", Box::new(NewFile))
                                 .action("New Folder", Box::new(NewDirectory))
                                 .separator()
@@ -604,20 +611,19 @@ impl ProjectPanel {
                             // .action("Rename", Box::new(Rename))
                         })
                         .when(!is_remote & is_root, |menu| {
-                            menu
-                                .action(
-                                    "Add Folder to Project…",
-                                    Box::new(workspace::AddFolderToProject),
-                                )
-                                .entry(
-                                    "Remove from Project",
-                                    None,
-                                    cx.handler_for(&this, move |this, cx| {
-                                        this.project.update(cx, |project, cx| {
-                                            project.remove_worktree(worktree_id, cx)
-                                        });
-                                    }),
-                                )
+                            menu.action(
+                                "Add Folder to Project…",
+                                Box::new(workspace::AddFolderToProject),
+                            )
+                            .entry(
+                                "Remove from Project",
+                                None,
+                                cx.handler_for(&this, move |this, cx| {
+                                    this.project.update(cx, |project, cx| {
+                                        project.remove_worktree(worktree_id, cx)
+                                    });
+                                }),
+                            )
                         })
                         .when(is_root, |menu| {
                             menu.separator()
@@ -1344,16 +1350,18 @@ impl ProjectPanel {
 
     fn checkout_specific_path(&mut self, _: &CheckoutPath, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry_handle(cx) {
-            let path = entry.path.clone();
+            let path = entry.path.to_path_buf();
             self.mega.update(cx, |mega, cx| {
-                let recv = mega.checkout_path(cx, path.to_path_buf());
+                println!("Checkout: {:?}", path);
+                let recv = mega.checkout_path(cx, path);
                 cx.spawn(|this, mut cx| async move {
                     let resp = recv.await;
                     println!("Response: {resp:?}");
                     if let Ok(Some(resp)) = resp {
                         if resp.is_resp_succeed() {
                             this.update(&mut cx, |mega, cx| {
-                                mega.mark_checkout(cx, resp.mount.path, resp.mount.inode);
+                                let path = resp.mount.path.parse().unwrap();
+                                mega.mark_checkout(cx, path, resp.mount.inode);
                             })
                             .expect("Mega delegate not been dropped");
                         }
@@ -1365,17 +1373,18 @@ impl ProjectPanel {
     }
 
     fn commit_specific_path(&mut self, _: &CommitPath, cx: &mut ViewContext<Self>) {
+        // TODO close windows that are in the commited paths.
         if let Some((_, entry)) = self.selected_entry_handle(cx) {
-            let path = entry.path.clone();
+            let path = entry.path.to_path_buf();
             self.mega.update(cx, |mega, cx| {
-                let recv = mega.restore_path(cx, path.to_path_buf());
+                let recv = mega.restore_path(cx, &path);
                 cx.spawn(|this, mut cx| async move {
                     let resp = recv.await;
                     println!("Response: {resp:?}");
                     if let Ok(Some(resp)) = resp {
                         if resp.is_resp_succeed() {
                             this.update(&mut cx, |mega, cx| {
-                                mega.mark_commited(cx, path.to_path_buf());
+                                mega.mark_commited(cx, &path);
                             })
                             .expect("Mega delegate not been dropped");
                         }
@@ -2302,12 +2311,18 @@ impl ProjectPanel {
                         worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
+                    
+                    let pb = entry.path.to_path_buf();
+                    let is_checkout = self.mega.read(cx).is_path_checkout(&pb);
+                    let is_checkout_root = self.mega.read(cx).is_path_checkout_root(&pb);
                     let mut details = EntryDetails {
                         filename,
                         icon,
                         path: entry.path.clone(),
                         depth,
                         kind: entry.kind,
+                        is_checkout,
+                        is_checkout_root,
                         is_ignored: entry.is_ignored,
                         is_expanded,
                         is_selected: self.selection == Some(selection),

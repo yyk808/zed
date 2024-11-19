@@ -1,6 +1,6 @@
-use schemars::JsonSchema;
-use gpui::Pixels;
 use gpui::private::serde::{Deserialize, Serialize};
+use gpui::Pixels;
+use schemars::JsonSchema;
 use settings::{Settings, SettingsSources};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]

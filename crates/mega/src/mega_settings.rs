@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use schemars::JsonSchema;
 use gpui::private::serde_derive::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use settings::{Settings, SettingsSources};
+use std::path::PathBuf;
 
 #[derive(Default, Deserialize, Debug, Clone, PartialEq)]
 pub struct MegaSettings {

@@ -1,21 +1,23 @@
-use utils::api::{
-    ConfigRequest, ConfigResponse, MountRequest, MountResponse, MountsResponse, UmountRequest,
-    UmountResponse,
-};
 use crate::mega_settings::MegaSettings;
 use futures::channel::oneshot;
 use futures::channel::oneshot::Receiver;
 use futures::AsyncReadExt;
 use gpui::http_client::{AsyncBody, HttpClient};
-use gpui::{AppContext, EventEmitter, ModelContext};
+use gpui::{hash, AppContext, EventEmitter, ModelContext};
 use radix_trie::{Trie, TrieCommon};
 use reqwest_client::ReqwestClient;
 use settings::Settings;
+use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
-use std::path::PathBuf;
+use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
+use utils::api::{
+    ConfigRequest, ConfigResponse, MountRequest, MountResponse, MountsResponse, UmountRequest,
+    UmountResponse,
+};
 
 mod mega_settings;
 pub mod utils;
@@ -46,7 +48,8 @@ pub struct Mega {
     heartbeat: bool,
 
     mount_point: Option<PathBuf>,
-    checkout_path: Trie<String, u64>,
+    checkout_lut: Trie<PathBuf, u64>,
+    checkout_path: BTreeSet<u64>,
 
     mega_url: String,
     fuse_url: String,
@@ -59,10 +62,13 @@ impl EventEmitter<Event> for Mega {}
 
 impl Debug for Mega {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let lut = self.checkout_lut.keys().map(|key| key.to_path_buf()).collect::<Vec<PathBuf>>();
+        
         write!(
             f,
-            "fuse_executable: {:?}, mega_url: {}, fuse_url: {}",
-            self.fuse_executable, self.mega_url, self.fuse_url
+            "fuse_executable: {:?}, mega_url: {}, fuse_url: {}\n\
+            LUT: {:?}",
+            self.fuse_executable, self.mega_url, self.fuse_url, lut
         )
     }
 }
@@ -85,12 +91,15 @@ impl Mega {
         // To not affected by global proxy settings.
         let client = ReqwestClient::new();
 
+        println!("Mount point: {mount_path:?}");
+
         let mount_point = if mount_path.exists() {
             Some(mount_path)
         } else {
+            log::error!("Mount point in setting does not exist");
             None
         };
-
+        
         Mega {
             fuse_executable,
 
@@ -99,6 +108,7 @@ impl Mega {
             heartbeat: false,
 
             mount_point,
+            checkout_lut: Trie::default(),
             checkout_path: Default::default(),
 
             mega_url,
@@ -108,65 +118,66 @@ impl Mega {
     }
 
     pub fn update_status(&mut self, cx: &mut ModelContext<Self>) {
-        let checkouts = self.get_checkout_paths(cx);
         let config = self.get_fuse_config(cx);
+        let checkouts = self.get_checkout_paths(cx);
 
         cx.spawn(|this, mut cx| async move {
-            if let Ok(opt) = checkouts.await {
+            // When mount point changed, emit an event.
+            // update mount point if it's none.
+            if let Ok(opt) = config.await {
                 match opt {
                     None => {
                         // This means we cannot connect to a localhost port.
                         // So we can assume that fuse has been dead.
-                        this.update(&mut cx, |mega, cx| {
+                        let _ = this.update(&mut cx, |mega, cx| {
                             mega.fuse_running = false;
                             mega.fuse_mounted = false;
                             cx.emit(Event::FuseRunning(false));
                             cx.emit(Event::FuseMounted(None));
-                        })
+                            return;
+                        });
                     }
-                    Some(info) => {
-                        // Check if checkout-ed paths are correct
-                        this.update(&mut cx, |mega, cx| {
-                            mega.fuse_running = true;
 
-                            let trie = &mut mega.checkout_path;
-                            for ref i in info.mounts {
-                                let missing = trie.get_ancestor(&i.path).is_none();
-                                if missing {
-                                    // Should not happen unless on startup.
-                                    trie.insert(i.path.clone(), i.inode);
-                                    cx.emit(Event::FuseCheckout(Some(PathBuf::from(
-                                        i.path.clone(),
-                                    ))))
+                    Some(config) => {
+                        let _ = this.update(&mut cx, |this, cx| {
+                            let path = PathBuf::from(config.config.mount_path);
+                            if (this.fuse_mounted && this.fuse_running) && this.mount_point.is_some() {
+                                if let Some(inner) = &this.mount_point {
+                                    if !inner.eq(&path) {
+                                        this.mount_point = Some(path);
+                                        cx.emit(Event::FuseMounted(this.mount_point.clone()));
+                                    }
+                                }
+                            } else if this.mount_point.is_none() {
+                                this.mount_point = Some(path);
+                                if this.fuse_running {
+                                    this.fuse_mounted = true;
+                                    cx.emit(Event::FuseMounted(this.mount_point.clone()));
                                 }
                             }
-                        })
+                        });
                     }
                 }
-            } else {
-                Ok(())
             }
-            .unwrap();
+            
+            if let Ok(Some(info)) = checkouts.await {
+                // Check if checkout-ed paths are correct
+                let _ = this.update(&mut cx, |mega, cx| {
+                    mega.fuse_running = true;
 
-            // When mount point changed, emit an event.
-            // update mount point if it's none.
-            if let Ok(Some(config)) = config.await {
-                this.update(&mut cx, |this, cx| {
-                    let path = PathBuf::from(config.config.mount_path);
-                    if (this.fuse_mounted && this.fuse_running) && this.mount_point.is_some() {
-                        if let Some(inner) = &this.mount_point {
-                            if !inner.eq(&path) {
-                                this.mount_point = Some(path);
-                                cx.emit(Event::FuseMounted(this.mount_point.clone()));
-                            }
+                    let trie = &mut mega.checkout_lut;
+                    for i in info.mounts.iter() {
+                        let path = i.path.parse().unwrap();
+
+                        let missing = trie.get_ancestor(&path).is_none();
+                        if missing {
+                            // Should not happen unless on startup.
+                            mega.checkout_path.insert(hash(&path));
+                            trie.insert(path, i.inode);
+                            cx.emit(Event::FuseCheckout(Some(PathBuf::from(i.path.clone()))));
                         }
-                    } else if this.fuse_running && this.mount_point.is_none() {
-                        this.mount_point = Some(path);
-                        cx.emit(Event::FuseMounted(this.mount_point.clone()));
                     }
-                })
-            } else {
-                Ok(())
+                });
             }
         })
         .detach();
@@ -181,7 +192,7 @@ impl Mega {
     /// Does nothing if fuse not running.
     pub fn toggle_fuse(&mut self, cx: &mut ModelContext<Self>) {
         self.update_status(cx);
-        let paths = &self.checkout_path;
+        let paths = &self.checkout_lut;
 
         if !self.fuse_running {
             return;
@@ -214,7 +225,7 @@ impl Mega {
                 let path = PathBuf::from(p); // FIXME is there a better way?
                 cx.spawn(|mega, mut cx| async move {
                     let recv = mega
-                        .update(&mut cx, |this, cx| this.restore_path(cx, path))
+                        .update(&mut cx, |this, cx| this.restore_path(cx, &path))
                         .expect("mega delegate not be dropped");
 
                     if let Ok(Some(_resp)) = recv.await {
@@ -284,18 +295,16 @@ impl Mega {
     pub fn restore_path(
         &self,
         cx: &ModelContext<Self>,
-        path: PathBuf,
+        path: &PathBuf,
     ) -> Receiver<Option<UmountResponse>> {
         let (tx, rx) = oneshot::channel();
         let client = self.http_client.clone();
         let uri = format!("{base}/api/fs/umount", base = self.fuse_url);
 
         // If panics here, that means there's a bug in code.
-        // maybe we should ensure every path absolute?
-        let path = path.to_str().unwrap();
-        let inode = self.checkout_path.get_ancestor_value(path);
+        let inode = self.checkout_lut.get_ancestor_value(path);
         let req = UmountRequest {
-            path: Some(path),
+            path: Some(path.to_str().unwrap()),
             inode: Some(inode.unwrap().to_owned()),
         };
         let body = serde_json::to_string(&req).unwrap();
@@ -427,29 +436,36 @@ impl Mega {
         .detach();
     }
 
-    pub fn is_path_checkout(&self, path: PathBuf) -> bool {
-        let set = &self.checkout_path;
-
-        set.get_ancestor(path.to_str().unwrap()).is_some()
+    pub fn is_path_checkout(&self, path: &PathBuf) -> bool {
+        // FIXME this function calls every time project_panel refresh * entry numbers
+        // the PathBuf construction happens right before calling this
+        // because the trie cannot receive a Arc<Path> for finding PathBuf members.
+        // LAG?
+        self.checkout_lut.get_ancestor(path).is_some()
     }
 
-    pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: String, inode: u64) {
-        if self.mount_point.is_some() {
-            let path = self
-                .mount_point
-                .clone()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-                + path.as_str();
-            self.checkout_path.insert(path, inode);
+    pub fn is_path_checkout_root(&self, path: &PathBuf) -> bool {
+        self.checkout_path.contains(&hash(path))
+    }
+
+    pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: PathBuf, inode: u64) {
+        if let Some(base) = &self.mount_point {
+            self.checkout_path.insert(hash(&path));
+            self.checkout_lut.insert(path, inode);
             cx.emit(Event::FuseCheckout(None));
         }
     }
 
-    pub fn mark_commited(&mut self, cx: &mut ModelContext<Self>, path: PathBuf) {
-        self.checkout_path.remove(path.to_str().unwrap());
+    pub fn mark_commited(&mut self, cx: &mut ModelContext<Self>, path: &PathBuf) {
+        self.checkout_path.remove(&hash(path));
+        self.checkout_lut.remove(path);
         cx.emit(Event::FuseCheckout(None));
+    }
+    
+    pub fn mount_point(&self) -> Option<&PathBuf> {
+        match self.mount_point {
+            Some(ref path) => Some(path),
+            None => None
+        }
     }
 }

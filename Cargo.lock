@@ -6899,6 +6899,7 @@ dependencies = [
  "bytes 1.7.2",
  "futures 0.3.30",
  "gpui",
+ "log",
  "radix_trie",
  "reqwest_client",
  "schemars",

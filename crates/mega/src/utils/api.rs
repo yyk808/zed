@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-const SUCCESS: &str   = "Success";
-const FAIL : &str   = "Fail";
+const SUCCESS: &str = "Success";
+const FAIL: &str = "Fail";
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MountRequest<'a> {
     pub path: &'a str,

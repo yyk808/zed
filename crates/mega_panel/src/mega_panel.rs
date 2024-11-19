@@ -7,8 +7,8 @@ use gpui::private::serde_json;
 use gpui::{
     actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId,
     EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model,
-    ParentElement, Pixels, PromptLevel, Render, SharedString, Stateful, Styled, Task
-    , View, ViewContext, VisualContext, WeakView, WindowContext,
+    ParentElement, Pixels, PromptLevel, Render, SharedString, Stateful, Styled, Task, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use mega::Mega;
 use settings::Settings;
@@ -274,13 +274,24 @@ impl MegaPanel {
 
         v_flex().id("mega-control-pad").size_full().children([
             encap_btn(
+                Button::new("refresh_mega_status", "Refresh Status")
+                    .full_width()
+                    .icon(IconName::Control)
+                    .icon_position(IconPosition::Start)
+                    .on_click(cx.listener(|this, _, cx | {
+                        this.mega_handle.update(cx, |mega, cx| { 
+                            mega.update_status(cx);
+                            println!("{mega:?}");
+                        })
+                    }))
+            ),
+            encap_btn(
                 Button::new("btn_toggle_mount", "Toggle Fuse Running")
                     .full_width()
                     .icon(IconName::Context)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|this, _, cx| {
-                        this.mega_handle
-                            .update(cx, |mega, cx| mega.toggle_mount(cx));
+                        this.mega_handle.update(cx, |mega, cx| mega.toggle_mount(cx));
                     })),
             ),
             encap_btn(
