@@ -9,8 +9,7 @@ use reqwest_client::ReqwestClient;
 use settings::Settings;
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
-use std::io::BufWriter;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -260,13 +259,12 @@ impl Mega {
     ///
     /// This function only opens up a new scorpio executable if it detects fuse not running.
     pub fn toggle_mount(&mut self, cx: &mut ModelContext<Self>) {
-        // We only start it, not stop it.
         if !self.fuse_running {
-            let _ = Command::new(self.fuse_executable.as_os_str())
-                .spawn()
-                .expect("Fuse Executable path not right");
-
-            self.update_status(cx);
+            if let Ok(_) =  Command::new(&self.fuse_executable).spawn() {
+                self.update_status(cx);
+            } else {
+                log::error!("Cannot start up fuse, check your settings");
+            }
         }
     }
 
@@ -450,10 +448,6 @@ impl Mega {
     }
 
     pub fn is_path_checkout(&self, path: &PathBuf) -> bool {
-        // FIXME this function calls every time project_panel refresh * entry numbers
-        // the PathBuf construction happens right before calling this
-        // because the trie cannot receive a Arc<Path> for finding PathBuf members.
-        // LAG?
         self.checkout_lut.get_ancestor(path).is_some()
     }
 
@@ -462,11 +456,9 @@ impl Mega {
     }
 
     pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: PathBuf, inode: u64) {
-        if let Some(base) = &self.mount_point {
-            self.checkout_path.insert(hash(&path));
-            self.checkout_lut.insert(path, inode);
-            cx.emit(Event::FuseCheckout(None));
-        }
+        self.checkout_path.insert(hash(&path));
+        self.checkout_lut.insert(path, inode);
+        cx.emit(Event::FuseCheckout(None));
     }
 
     pub fn mark_commited(&mut self, cx: &mut ModelContext<Self>, path: &PathBuf) {

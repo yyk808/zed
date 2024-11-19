@@ -45,7 +45,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use std::ops::Deref;
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, Label, ListItem, Tooltip};
 use util::{maybe, ResultExt, TryFutureExt};
@@ -2311,7 +2310,7 @@ impl ProjectPanel {
                         worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
-                    
+
                     let pb = entry.path.to_path_buf();
                     let is_checkout = self.mega.read(cx).is_path_checkout(&pb);
                     let is_checkout_root = self.mega.read(cx).is_path_checkout_root(&pb);
