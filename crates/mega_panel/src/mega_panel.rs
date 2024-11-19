@@ -4,12 +4,7 @@ use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::private::serde_derive::{Deserialize, Serialize};
 use gpui::private::serde_json;
-use gpui::{
-    actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, ElementId,
-    EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model,
-    ParentElement, Pixels, PromptLevel, Render, SharedString, Stateful, Styled, Task, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
-};
+use gpui::{actions, div, Action, AppContext, AssetSource, AsyncWindowContext, Div, Element, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, PromptLevel, Render, SharedString, Stateful, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext};
 use mega::Mega;
 use settings::Settings;
 use std::sync::Arc;
@@ -97,6 +92,8 @@ impl Render for MegaPanel {
             )
             .child(horizontal_separator(cx))
             .child(self.render_status(cx))
+            .child(horizontal_separator(cx))
+            .child(self.render_checkout_points(cx))
             .child(horizontal_separator(cx))
             .child(self.render_buttons(cx));
 
@@ -265,6 +262,18 @@ impl MegaPanel {
             self.status_unit(cx, "Scorpio Backend:", fuse_running),
             self.status_unit(cx, "Fuse Mounted:", fuse_mounted),
         ])
+    }
+
+    fn render_checkout_points(&mut self, cx: &mut ViewContext<Self>) -> Stateful<Div> {
+        let points = self.mega_handle.read(cx).checkout_points();
+        let points: Vec<Label> = points.into_iter().map(|t| {
+            Label::new(t.to_owned()).single_line().color(Color::Ignored)
+        }).collect();
+        
+        v_flex().id("checkout_points").gap_1().text_ui(cx)
+            .child(Label::new("Checkout Points:").single_line())
+            .children(points)
+            
     }
 
     fn render_buttons(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {

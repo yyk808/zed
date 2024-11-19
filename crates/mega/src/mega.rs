@@ -62,8 +62,12 @@ impl EventEmitter<Event> for Mega {}
 
 impl Debug for Mega {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let lut = self.checkout_lut.keys().map(|key| key.to_path_buf()).collect::<Vec<PathBuf>>();
-        
+        let lut = self
+            .checkout_lut
+            .keys()
+            .map(|key| key.to_path_buf())
+            .collect::<Vec<PathBuf>>();
+
         write!(
             f,
             "fuse_executable: {:?}, mega_url: {}, fuse_url: {}\n\
@@ -99,7 +103,7 @@ impl Mega {
             log::error!("Mount point in setting does not exist");
             None
         };
-        
+
         Mega {
             fuse_executable,
 
@@ -141,7 +145,9 @@ impl Mega {
                     Some(config) => {
                         let _ = this.update(&mut cx, |this, cx| {
                             let path = PathBuf::from(config.config.mount_path);
-                            if (this.fuse_mounted && this.fuse_running) && this.mount_point.is_some() {
+                            if (this.fuse_mounted && this.fuse_running)
+                                && this.mount_point.is_some()
+                            {
                                 if let Some(inner) = &this.mount_point {
                                     if !inner.eq(&path) {
                                         this.mount_point = Some(path);
@@ -159,7 +165,7 @@ impl Mega {
                     }
                 }
             }
-            
+
             if let Ok(Some(info)) = checkouts.await {
                 // Check if checkout-ed paths are correct
                 let _ = this.update(&mut cx, |mega, cx| {
@@ -185,6 +191,13 @@ impl Mega {
 
     pub fn status(&self) -> (bool, bool) {
         (self.fuse_running, self.fuse_mounted)
+    }
+
+    pub fn checkout_points(&self) -> Vec<String> {
+        self.checkout_lut
+            .keys()
+            .map(|key| key.as_path().to_str().unwrap().to_string())
+            .collect()
     }
 
     /// ## Toggle Fuse checkouts
@@ -461,11 +474,11 @@ impl Mega {
         self.checkout_lut.remove(path);
         cx.emit(Event::FuseCheckout(None));
     }
-    
+
     pub fn mount_point(&self) -> Option<&PathBuf> {
         match self.mount_point {
             Some(ref path) => Some(path),
-            None => None
+            None => None,
         }
     }
 }
