@@ -44,6 +44,7 @@ use std::{
         Arc,
     },
 };
+use mega::Mega;
 use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
@@ -271,6 +272,7 @@ impl TestServer {
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
+        let mega = cx.new_model(|cx| Mega::new(cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -280,6 +282,7 @@ impl TestServer {
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
             session,
+            mega,
         });
 
         let os_keymap = "keymaps/default-macos.json";
@@ -401,6 +404,7 @@ impl TestServer {
         let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
+        let mega = cx.new_model(|cx| Mega::new(cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
@@ -410,6 +414,7 @@ impl TestServer {
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
             session,
+            mega,
         });
 
         cx.update(|cx| {

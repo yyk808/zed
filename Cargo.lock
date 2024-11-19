@@ -2569,6 +2569,7 @@ dependencies = [
  "live_kit_server",
  "log",
  "lsp",
+ "mega",
  "menu",
  "multi_buffer",
  "nanoid",
