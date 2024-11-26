@@ -315,8 +315,13 @@ impl ProjectPanel {
                 mega::Event::FuseMounted(None) => {
                     // TODO: close the workspace
                 }
-                mega::Event::FuseCheckout(_path) => {
-                    // It's not important, for now.
+                mega::Event::FuseCheckout(path) => {
+                    // pop a prompt to notify users if the directory has been loaded
+                    if let Some(_path) = path {
+                        this.notify_checkout(cx, true);
+                    } else {
+                        this.notify_checkout(cx, false);
+                    }
                 }
                 _ => {}
             })
@@ -1373,6 +1378,9 @@ impl ProjectPanel {
 
     fn commit_specific_path(&mut self, _: &CommitPath, cx: &mut ViewContext<Self>) {
         // TODO close windows that are in the commited paths.
+        // self.workspace.update(cx, |this, cx| {
+        //     this.
+        // })
         if let Some((_, entry)) = self.selected_entry_handle(cx) {
             let path = entry.path.to_path_buf();
             self.mega.update(cx, |mega, cx| {
@@ -2957,6 +2965,24 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         }
+    }
+
+    fn notify_checkout(&self, cx: &mut ViewContext<Self>, checkout: bool) {
+        let message = if checkout {
+            String::from(
+                "The directory has been loaded",
+            )
+        } else {
+            String::from(
+                "The directory has been commited"
+            )
+        };
+        let _ = cx.prompt(
+            PromptLevel::Info,
+            "Checkout Status",
+            Some(&message),
+            &["Got it"],
+        );
     }
 }
 

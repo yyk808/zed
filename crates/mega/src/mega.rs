@@ -150,7 +150,7 @@ impl Mega {
                                 if let Some(inner) = &this.mount_point {
                                     if !inner.eq(&path) {
                                         this.mount_point = Some(path);
-                                        cx.emit(Event::FuseMounted(this.mount_point.clone()));
+                                        // cx.emit(Event::FuseMounted(this.mount_point.clone()));
                                     }
                                 }
                             } else if this.mount_point.is_none() {
@@ -167,7 +167,7 @@ impl Mega {
 
             if let Ok(Some(info)) = checkouts.await {
                 // Check if checkout-ed paths are correct
-                let _ = this.update(&mut cx, |mega, cx| {
+                let _ = this.update(&mut cx, |mega, _cx| {
                     mega.fuse_running = true;
 
                     let trie = &mut mega.checkout_lut;
@@ -179,7 +179,7 @@ impl Mega {
                             // Should not happen unless on startup.
                             mega.checkout_path.insert(hash(&path));
                             trie.insert(path, i.inode);
-                            cx.emit(Event::FuseCheckout(Some(PathBuf::from(i.path.clone()))));
+                            // cx.emit(Event::FuseCheckout(Some(PathBuf::from(i.path.clone()))));
                         }
                     }
                 });
@@ -218,13 +218,11 @@ impl Mega {
                         .update(&mut cx, |this, cx| this.checkout_path(cx, path))
                         .expect("mega delegate not be dropped");
 
-                    if let Ok(Some(resp)) = recv.await {
-                        mega.update(&mut cx, |_, cx| {
-                            let buf = PathBuf::from(resp.mount.path.clone());
-                            cx.emit(Event::FuseCheckout(Some(buf)));
-                        })
-                    } else {
-                        Ok(())
+                    if let Ok(Some(_resp)) = recv.await {
+                        // mega.update(&mut cx, |_, cx| {
+                        //     let buf = PathBuf::from(resp.mount.path.clone());
+                        //     cx.emit(Event::FuseCheckout(Some(buf)));
+                        // })
                     }
                 })
                 .detach();
@@ -241,12 +239,10 @@ impl Mega {
                         .expect("mega delegate not be dropped");
 
                     if let Ok(Some(_resp)) = recv.await {
-                        mega.update(&mut cx, |_, cx| {
-                            // TODO use a new check out state struct
-                            cx.emit(Event::FuseCheckout(None));
-                        })
-                    } else {
-                        Ok(())
+                        // mega.update(&mut cx, |_, cx| {
+                        //     // TODO use a new check out state struct
+                        //     cx.emit(Event::FuseCheckout(None));
+                        // })
                     }
                 })
                 .detach();
@@ -456,15 +452,15 @@ impl Mega {
     }
 
     pub fn mark_checkout(&mut self, cx: &mut ModelContext<Self>, path: PathBuf, inode: u64) {
+        cx.emit(Event::FuseCheckout(Some(path.clone())));
         self.checkout_path.insert(hash(&path));
         self.checkout_lut.insert(path, inode);
-        cx.emit(Event::FuseCheckout(None));
     }
 
     pub fn mark_commited(&mut self, cx: &mut ModelContext<Self>, path: &PathBuf) {
+        cx.emit(Event::FuseCheckout(None));
         self.checkout_path.remove(&hash(path));
         self.checkout_lut.remove(path);
-        cx.emit(Event::FuseCheckout(None));
     }
 
     pub fn mount_point(&self) -> Option<&PathBuf> {
