@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
+use extension::ExtensionHostProxy;
+use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -10,7 +12,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -37,6 +39,7 @@ pub struct HeadlessProject {
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
+    pub extensions: Model<HeadlessExtensionStore>,
 }
 
 pub struct HeadlessAppState {
@@ -45,6 +48,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
 impl HeadlessProject {
@@ -61,9 +65,11 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {
@@ -78,20 +84,29 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                node_runtime,
+                node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
                 cx,
             )
         });
-
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let toolchain_store = cx.new_model(|cx| {
+            ToolchainStore::local(
+                languages.clone(),
+                worktree_store.clone(),
+                environment.clone(),
+                cx,
+            )
+        });
+
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
                 fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
                 cx,
             );
@@ -108,14 +123,16 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
+
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
+                toolchain_store.clone(),
                 environment,
                 languages.clone(),
-                http_client,
+                http_client.clone(),
                 fs.clone(),
                 cx,
             );
@@ -136,6 +153,15 @@ impl HeadlessProject {
         )
         .detach();
 
+        let extensions = HeadlessExtensionStore::new(
+            fs.clone(),
+            http_client.clone(),
+            paths::remote_extensions_dir().to_path_buf(),
+            proxy,
+            node_runtime,
+            cx,
+        );
+
         let client: AnyProtoClient = session.clone().into();
 
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
@@ -143,10 +169,11 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
-        client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
+        client.add_request_handler(cx.weak_model(), Self::handle_get_path_metadata);
         client.add_request_handler(cx.weak_model(), Self::handle_shutdown_remote_server);
         client.add_request_handler(cx.weak_model(), Self::handle_ping);
 
@@ -154,17 +181,28 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_model(), Self::handle_remove_worktree);
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_find_search_candidates);
         client.add_model_request_handler(Self::handle_open_server_settings);
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_request_handler(
+            extensions.clone().downgrade(),
+            HeadlessExtensionStore::handle_sync_extensions,
+        );
+        client.add_request_handler(
+            extensions.clone().downgrade(),
+            HeadlessExtensionStore::handle_install_extension,
+        );
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
         LspStore::init(&client);
         TaskStore::init(Some(&client));
+        ToolchainStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -176,6 +214,7 @@ impl HeadlessProject {
             task_store,
             next_entry_id: Default::default(),
             languages,
+            extensions,
         }
     }
 
@@ -205,7 +244,7 @@ impl HeadlessProject {
         &mut self,
         _lsp_store: Model<LspStore>,
         event: &LspStoreEvent,
-        _cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             LspStoreEvent::LanguageServerUpdate {
@@ -238,6 +277,29 @@ impl HeadlessProject {
                         log_type: Some(log_type.to_proto()),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerPrompt(prompt) => {
+                let request = self.session.request(proto::LanguageServerPromptRequest {
+                    project_id: SSH_PROJECT_ID,
+                    actions: prompt
+                        .actions
+                        .iter()
+                        .map(|action| action.title.to_string())
+                        .collect(),
+                    level: Some(prompt_to_proto(&prompt)),
+                    lsp_name: prompt.lsp_name.clone(),
+                    message: prompt.message.clone(),
+                });
+                let prompt = prompt.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let response = request.await?;
+                        if let Some(action_response) = response.action_response {
+                            prompt.respond(action_response as usize).await;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach();
             }
             _ => {}
         }
@@ -275,7 +337,7 @@ impl HeadlessProject {
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Arc::from(canonicalized),
+                    Arc::from(canonicalized.as_path()),
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -287,6 +349,7 @@ impl HeadlessProject {
         let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().to_string(),
             })
         })?;
 
@@ -346,6 +409,32 @@ impl HeadlessProject {
                     cx,
                 )
             });
+            anyhow::Ok((buffer_store, buffer))
+        })??;
+
+        let buffer = buffer.await?;
+        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .detach_and_log_err(cx);
+        })?;
+
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_open_new_buffer(
+        this: Model<Self>,
+        _message: TypedEnvelope<proto::OpenNewBuffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
+            let buffer_store = this.buffer_store.clone();
+            let buffer = this
+                .buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx));
             anyhow::Ok((buffer_store, buffer))
         })??;
 
@@ -469,18 +558,20 @@ impl HeadlessProject {
         Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
-    pub async fn handle_check_file_exists(
+    pub async fn handle_get_path_metadata(
         this: Model<Self>,
-        envelope: TypedEnvelope<proto::CheckFileExists>,
+        envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncAppContext,
-    ) -> Result<proto::CheckFileExistsResponse> {
+    ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
 
-        let exists = fs.is_file(&PathBuf::from(expanded.clone())).await;
+        let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
+        let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
-        Ok(proto::CheckFileExistsResponse {
-            exists,
+        Ok(proto::GetPathMetadataResponse {
+            exists: metadata.is_some(),
+            is_dir,
             path: expanded,
         })
     }
@@ -510,5 +601,21 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+}
+
+fn prompt_to_proto(
+    prompt: &project::LanguageServerPromptRequest,
+) -> proto::language_server_prompt_request::Level {
+    match prompt.level {
+        PromptLevel::Info => proto::language_server_prompt_request::Level::Info(
+            proto::language_server_prompt_request::Info {},
+        ),
+        PromptLevel::Warning => proto::language_server_prompt_request::Level::Warning(
+            proto::language_server_prompt_request::Warning {},
+        ),
+        PromptLevel::Critical => proto::language_server_prompt_request::Level::Critical(
+            proto::language_server_prompt_request::Critical {},
+        ),
     }
 }

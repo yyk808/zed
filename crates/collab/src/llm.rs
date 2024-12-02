@@ -3,9 +3,11 @@ pub mod db;
 mod telemetry;
 mod token;
 
+use crate::api::events::SnowflakeRow;
+use crate::api::CloudflareIpCountryHeader;
+use crate::build_kinesis_client;
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor, Cents,
-    Config, Error, Result,
+    build_clickhouse_client, db::UserId, executor::Executor, Cents, Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -28,6 +30,7 @@ use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
 use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
+use serde_json::json;
 use std::{
     pin::Pin,
     sync::Arc,
@@ -45,6 +48,7 @@ pub struct LlmState {
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
     pub http_client: ReqwestClient,
+    pub kinesis_client: Option<aws_sdk_kinesis::Client>,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -77,6 +81,11 @@ impl LlmState {
             executor,
             db,
             http_client,
+            kinesis_client: if config.kinesis_access_key.is_some() {
+                build_kinesis_client(&config).await.log_err()
+            } else {
+                None
+            },
             clickhouse_client: config
                 .clickhouse_url
                 .as_ref()
@@ -267,7 +276,6 @@ async fn perform_completion(
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
                 request,
-                None,
             )
             .await
             .map_err(|err| match err {
@@ -357,7 +365,6 @@ async fn perform_completion(
                 open_ai::OPEN_AI_API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -390,7 +397,6 @@ async fn perform_completion(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -435,7 +441,7 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
 
 /// The maximum monthly spending an individual user can reach on the free tier
 /// before they have to pay.
-pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
 
 /// The default value to use for maximum spend per month if the user did not
 /// explicitly set a maximum spend.
@@ -443,15 +449,16 @@ pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
 /// Used to prevent surprise bills.
 pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
-/// The maximum lifetime spending an individual user can reach before being cut off.
-const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
-
 async fn check_usage_limit(
     state: &Arc<LlmState>,
     provider: LanguageModelProvider,
     model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    if claims.is_staff {
+        return Ok(());
+    }
+
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
@@ -462,37 +469,28 @@ async fn check_usage_limit(
             Utc::now(),
         )
         .await?;
+    let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
-            if !claims.has_llm_subscription {
-                return Err(Error::http(
-                    StatusCode::PAYMENT_REQUIRED,
-                    "Maximum spending limit reached for this month.".to_string(),
-                ));
-            }
-
-            if usage.spending_this_month >= Cents(claims.max_monthly_spend_in_cents) {
-                return Err(Error::Http(
-                    StatusCode::FORBIDDEN,
-                    "Maximum spending limit reached for this month.".to_string(),
-                    [(
-                        HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
-                        HeaderValue::from_static("true"),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ));
-            }
+    if usage.spending_this_month >= free_tier {
+        if !claims.has_llm_subscription {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "Maximum spending limit reached for this month.".to_string(),
+            ));
         }
-    }
 
-    // TODO: Remove this once we've rolled out monthly spending limits.
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
-        return Err(Error::http(
-            StatusCode::FORBIDDEN,
-            "Maximum spending limit reached.".to_string(),
-        ));
+        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+            return Err(Error::Http(
+                StatusCode::FORBIDDEN,
+                "Maximum spending limit reached for this month.".to_string(),
+                [(
+                    HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                    HeaderValue::from_static("true"),
+                )]
+                .into_iter()
+                .collect(),
+            ));
+        }
     }
 
     let active_users = state.get_active_user_count(provider, model_name).await?;
@@ -525,11 +523,6 @@ async fn check_usage_limit(
     ];
 
     for (used, limit, usage_measure) in checks {
-        // Temporarily bypass rate-limiting for staff members.
-        if claims.is_staff {
-            continue;
-        }
-
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
@@ -537,25 +530,50 @@ async fn check_usage_limit(
                 UsageMeasure::TokensPerDay => "tokens_per_day",
             };
 
-            if let Some(client) = state.clickhouse_client.as_ref() {
-                tracing::info!(
-                    target: "user rate limit",
-                    user_id = claims.user_id,
-                    login = claims.github_user_login,
-                    authn.jti = claims.jti,
-                    is_staff = claims.is_staff,
-                    provider = provider.to_string(),
-                    model = model.name,
-                    requests_this_minute = usage.requests_this_minute,
-                    tokens_this_minute = usage.tokens_this_minute,
-                    tokens_this_day = usage.tokens_this_day,
-                    users_in_recent_minutes = users_in_recent_minutes,
-                    users_in_recent_days = users_in_recent_days,
-                    max_requests_per_minute = per_user_max_requests_per_minute,
-                    max_tokens_per_minute = per_user_max_tokens_per_minute,
-                    max_tokens_per_day = per_user_max_tokens_per_day,
-                );
+            tracing::info!(
+                target: "user rate limit",
+                user_id = claims.user_id,
+                login = claims.github_user_login,
+                authn.jti = claims.jti,
+                is_staff = claims.is_staff,
+                provider = provider.to_string(),
+                model = model.name,
+                requests_this_minute = usage.requests_this_minute,
+                tokens_this_minute = usage.tokens_this_minute,
+                tokens_this_day = usage.tokens_this_day,
+                users_in_recent_minutes = users_in_recent_minutes,
+                users_in_recent_days = users_in_recent_days,
+                max_requests_per_minute = per_user_max_requests_per_minute,
+                max_tokens_per_minute = per_user_max_tokens_per_minute,
+                max_tokens_per_day = per_user_max_tokens_per_day,
+            );
 
+            SnowflakeRow::new(
+                "Language Model Rate Limited",
+                claims.metrics_id,
+                claims.is_staff,
+                claims.system_id.clone(),
+                json!({
+                    "usage": usage,
+                    "users_in_recent_minutes": users_in_recent_minutes,
+                    "users_in_recent_days": users_in_recent_days,
+                    "max_requests_per_minute": per_user_max_requests_per_minute,
+                    "max_tokens_per_minute": per_user_max_tokens_per_minute,
+                    "max_tokens_per_day": per_user_max_tokens_per_day,
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
+                    },
+                    "model": model.name.clone(),
+                    "provider": provider.to_string(),
+                    "usage_measure": resource.to_string(),
+                }),
+            )
+            .write(&state.kinesis_client, &state.config.kinesis_stream)
+            .await
+            .log_err();
+
+            if let Some(client) = state.clickhouse_client.as_ref() {
                 report_llm_rate_limit(
                     client,
                     LlmRateLimitEventRow {
@@ -636,7 +654,6 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
-        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
@@ -650,15 +667,9 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     tokens,
-                    // We're passing `false` here if LLM billing is not enabled
-                    // so that we don't write any records to the
-                    // `billing_events` table until we're ready to bill users.
-                    if is_llm_billing_enabled {
-                        claims.has_llm_subscription
-                    } else {
-                        false
-                    },
+                    claims.has_llm_subscription,
                     Cents(claims.max_monthly_spend_in_cents),
+                    claims.free_tier_monthly_spending_limit(),
                     Utc::now(),
                 )
                 .await
@@ -674,6 +685,27 @@ impl<S> Drop for TokenCountingStream<S> {
                     requests_this_minute = usage.requests_this_minute,
                     tokens_this_minute = usage.tokens_this_minute,
                 );
+
+                let properties = json!({
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
+                    },
+                    "model": model,
+                    "provider": provider,
+                    "usage": usage,
+                    "tokens": tokens
+                });
+                SnowflakeRow::new(
+                    "Language Model Used",
+                    claims.metrics_id,
+                    claims.is_staff,
+                    claims.system_id.clone(),
+                    properties,
+                )
+                .write(&state.kinesis_client, &state.config.kinesis_stream)
+                .await
+                .log_err();
 
                 if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
                     report_llm_usage(
